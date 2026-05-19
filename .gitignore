@@ -1,0 +1,44 @@
+# Secrets
+.env
+.env.local
+secrets/
+*.key
+credentials.json
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+.pytest_cache/
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+
+# Large files
+*.mp4
+*.mov
+*.mkv
+*.avi
+videos/
+recordings/
+uploads/
+*.pth
+*.onnx
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Databases
+*.db
+*.sqlite
+
+# Logs / Temp
+*.log
+tmp/
+.cache/
