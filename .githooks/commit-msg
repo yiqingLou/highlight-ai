@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+import sys
+
+def is_ascii(s):
+    return all(ord(c) < 128 for c in s)
+
+def main():
+    if len(sys.argv) < 2:
+        print("commit-msg hook: missing commit message file")
+        sys.exit(0)
+    path = sys.argv[1]
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            msg = f.read().strip()
+    except Exception as e:
+        print(f"commit-msg hook: cannot read commit message: {e}")
+        sys.exit(0)
+
+    if not is_ascii(msg):
+        print('\nCommit message rejected: please use English (ASCII) characters only.')
+        print('Suggested: translate your message to English, then commit again.')
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
