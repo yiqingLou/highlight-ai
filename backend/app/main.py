@@ -22,7 +22,8 @@ from sqlalchemy import func
 
 from app.database import get_db
 from app.models import Task, Highlight, Clip, Bgm, Setting
-
+from app.schemas.highlight import HighlightResponse, HighlightDetailResponse, HighlightListResponse
+from fastapi import FastAPI, Depends, HTTPException
 
 app = FastAPI(
     title="highlight-ai API",
@@ -64,53 +65,38 @@ def hello():
 # Highlights endpoints
 # ============================================
 
-@app.get("/api/highlights")
+@app.get("/api/highlights", response_model=HighlightListResponse)
 def get_highlights(db: Session = Depends(get_db)):
     """Return all highlights, sorted by score (highest first)."""
     highlights = db.query(Highlight).order_by(Highlight.score.desc()).all()
     return {
-        "highlights": [
-            {
-                "id": h.id,
-                "task_id": h.task_id,
-                "label": h.label,
-                "start_sec": h.start_sec,
-                "end_sec": h.end_sec,
-                "score": h.score,
-                "reason": h.reason,
-                "is_selected": h.is_selected,
-            }
-            for h in highlights
-        ],
+        "highlights": highlights,
         "total": len(highlights),
     }
 
-
-@app.get("/api/highlights/{highlight_id}")
+@app.get("/api/highlights/{highlight_id}", response_model=HighlightDetailResponse)
 def get_highlight_by_id(highlight_id: int, db: Session = Depends(get_db)):
     """Return a single highlight by its ID, with detailed sub-scores."""
     highlight = db.query(Highlight).filter(Highlight.id == highlight_id).first()
 
     if highlight is None:
-        return {"error": "Highlight not found", "id": highlight_id}
+        raise HTTPException(status_code=404, detail=f"Highlight {highlight_id} not found")
 
-    return {
-        "id": highlight.id,
-        "task_id": highlight.task_id,
-        "label": highlight.label,
-        "start_sec": highlight.start_sec,
-        "end_sec": highlight.end_sec,
-        "duration_sec": round(highlight.end_sec - highlight.start_sec, 2),
-        "score": highlight.score,
-        "score_ocr": highlight.score_ocr,
-        "score_audio": highlight.score_audio,
-        "score_visual": highlight.score_visual,
-        "reason": highlight.reason,
-        "is_selected": highlight.is_selected,
-        "user_modified": highlight.user_modified,
-    }
-
-
+    return HighlightDetailResponse(
+        id=highlight.id,
+        task_id=highlight.task_id,
+        label=highlight.label,
+        start_sec=highlight.start_sec,
+        end_sec=highlight.end_sec,
+        duration_sec=round(highlight.end_sec - highlight.start_sec, 2),
+        score=highlight.score,
+        score_ocr=highlight.score_ocr,
+        score_audio=highlight.score_audio,
+        score_visual=highlight.score_visual,
+        reason=highlight.reason,
+        is_selected=highlight.is_selected,
+        user_modified=highlight.user_modified,
+    )
 # ============================================
 # Tasks endpoints
 # ============================================
