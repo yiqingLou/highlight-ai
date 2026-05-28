@@ -2,10 +2,13 @@
 Tasks routes - /api/tasks/*
 
 Endpoints:
-  GET  /         - List all tasks
-  GET  /{id}     - Get one task by ID (with related highlights)
-  POST /         - Create a new task (auto-extracts video metadata)
+  GET  /                              - List all tasks
+  GET  /{id}                          - Get one task by ID (with related highlights)
+  POST /                              - Create a new task (auto-extracts video metadata)
+  POST /{id}/extract-frames           - Extract JPG frames from task's video
 """
+
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -13,7 +16,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Task, Highlight
 from app.schemas.task import TaskListResponse, TaskDetailResponse, TaskCreate
-from app.services.video_processor import extract_video_metadata, VideoProbeError
+from app.services.video_processor import (
+    extract_video_metadata,
+    extract_frames,
+    VideoProbeError,
+)
 
 router = APIRouter()
 
@@ -105,12 +112,10 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
         progress=0,
     )
 
-    # Save to database
     db.add(new_task)
     db.commit()
     db.refresh(new_task)
 
-    # Return the created task (no highlights yet, AI hasn't run)
     return TaskDetailResponse(
         id=new_task.id,
         file_name=new_task.file_name,
@@ -127,3 +132,57 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
         highlight_count=0,
         highlight_ids=[],
     )
+
+
+@router.post("/{task_id}/extract-frames")
+def extract_task_frames(task_id: int, fps: int = 1, db: Session = Depends(get_db)):
+    """
+    Extract frames from a task's video file using ffmpeg.
+
+    Path param:
+        task_id: ID of the task to extract frames for
+
+    Query param:
+        fps: Frames per second to extract (default 1)
+
+    Returns:
+        task_id, frame_count, frames_dir, fps, sample_paths
+
+    Errors:
+        404 if task not found
+        400 if video file missing or ffmpeg fails
+        409 if frames already extracted for this task
+    """
+    # 1. Find the task
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found",
+        )
+
+    # 2. Decide where to store frames: backend/frames/{task_id}/
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    frames_dir = BACKEND_DIR / "frames" / str(task_id)
+
+    # 3. Run extraction
+    try:
+        frame_paths = extract_frames(
+            video_path=task.file_path,
+            output_dir=str(frames_dir),
+            fps=fps,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except VideoProbeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "task_id": task_id,
+        "frame_count": len(frame_paths),
+        "frames_dir": str(frames_dir),
+        "fps": fps,
+        "sample_paths": frame_paths[:3],  # first 3 paths for verification
+    }

@@ -2,16 +2,19 @@
 Video processing service.
 
 Wraps FFmpeg / ffprobe so the rest of the app doesn't deal with subprocess directly.
+
+Functions:
+- extract_video_metadata(): use ffprobe to read video metadata (duration, resolution, fps, etc.)
+- extract_frames(): use ffmpeg to extract JPG frames at a given fps
 """
 
 import json
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 
 class VideoProbeError(Exception):
-    """Raised when ffprobe fails to read a video file."""
+    """Raised when ffprobe / ffmpeg fails to process a video file."""
     pass
 
 
@@ -106,3 +109,74 @@ def extract_video_metadata(file_path: str) -> dict:
         "video_codec": video_stream.get("codec_name"),
         "audio_codec": audio_stream.get("codec_name") if audio_stream else None,
     }
+
+
+def extract_frames(
+    video_path: str,
+    output_dir: str,
+    fps: int = 1,
+) -> list[str]:
+    """
+    Extract frames from a video at a given rate using ffmpeg.
+
+    Args:
+        video_path: Path to source video file.
+        output_dir: Directory to write JPG frames to (created if needed).
+        fps: Frames per second to extract (default 1 = one frame per second).
+
+    Returns:
+        List of absolute paths to extracted JPG files, sorted by frame number.
+
+    Raises:
+        FileNotFoundError: video_path doesn't exist
+        ValueError: fps out of range
+        FileExistsError: output_dir already has frames in it (safety guard)
+        VideoProbeError: ffmpeg fails
+    """
+
+    # 1. Validate inputs
+    src = Path(video_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Video file not found: {video_path}")
+
+    if fps < 1 or fps > 60:
+        raise ValueError(f"fps must be 1-60, got {fps}")
+
+    # 2. Ensure output directory exists and is empty
+    out_dir = Path(output_dir)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise FileExistsError(
+            f"Output directory not empty: {output_dir}. "
+            f"Delete it first to re-extract."
+        )
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 3. Build ffmpeg command
+    # Pattern frame_%04d.jpg generates frame_0001.jpg, frame_0002.jpg, etc.
+    output_pattern = str(out_dir / "frame_%04d.jpg")
+    cmd = [
+        "ffmpeg",
+        "-i", str(src),
+        "-vf", f"fps={fps}",
+        "-q:v", "2",            # JPG quality (1=best, 31=worst), 2 = high quality
+        "-loglevel", "error",   # suppress non-error log spam
+        output_pattern,
+    ]
+
+    # 4. Run ffmpeg (this might take 30s-2min for a long video)
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 min max
+        )
+    except subprocess.TimeoutExpired:
+        raise VideoProbeError(f"ffmpeg timed out extracting frames from {video_path}")
+
+    if result.returncode != 0:
+        raise VideoProbeError(f"ffmpeg failed: {result.stderr}")
+
+    # 5. Collect generated file paths (sorted by frame number)
+    frame_files = sorted(out_dir.glob("frame_*.jpg"))
+    return [str(f) for f in frame_files]
