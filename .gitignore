@@ -42,3 +42,6 @@ Thumbs.db
 *.log
 tmp/
 .cache/
+# Generated frames (regenerable from videos)
+backend/frames/
+tests/perf/frames_test/
