@@ -186,3 +186,44 @@ def extract_task_frames(task_id: int, fps: int = 1, db: Session = Depends(get_db
         "fps": fps,
         "sample_paths": frame_paths[:3],  # first 3 paths for verification
     }
+@router.get("/{task_id}/frames")
+def get_task_frames(task_id: int, db: Session = Depends(get_db)):
+    """
+    Get frame extraction status for a task.
+
+    Returns whether frames have been extracted, count, and sample paths.
+
+    Errors:
+        404 if task not found
+    """
+    # 1. Verify task exists
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task {task_id} not found",
+        )
+
+    # 2. Check if frames directory exists
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    frames_dir = BACKEND_DIR / "frames" / str(task_id)
+
+    if not frames_dir.exists():
+        return {
+            "task_id": task_id,
+            "extracted": False,
+            "frame_count": 0,
+            "frames_dir": str(frames_dir),
+            "sample_paths": [],
+        }
+
+    # 3. Count and list frames
+    frame_files = sorted(frames_dir.glob("frame_*.jpg"))
+
+    return {
+        "task_id": task_id,
+        "extracted": len(frame_files) > 0,
+        "frame_count": len(frame_files),
+        "frames_dir": str(frames_dir),
+        "sample_paths": [str(f) for f in frame_files[:3]],
+    }
