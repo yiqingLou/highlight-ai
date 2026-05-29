@@ -5,7 +5,9 @@ Endpoints:
   GET  /                              - List all tasks
   GET  /{id}                          - Get one task by ID (with related highlights)
   POST /                              - Create a new task (auto-extracts video metadata)
+                                        Rejects duplicate file_path with 409 Conflict
   POST /{id}/extract-frames           - Extract JPG frames from task's video
+  GET  /{id}/frames                   - Query frame extraction status
 """
 
 from pathlib import Path
@@ -82,8 +84,17 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     - game_type (optional, must be set by user)
 
     Errors:
+    - 409 if a task already exists for this file_path (prevents duplicates)
     - 400 if the file doesn't exist or isn't a valid video
     """
+    # Check for duplicate: same file_path already exists
+    existing = db.query(Task).filter(Task.file_path == task_data.file_path).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task already exists for this file_path (id={existing.id})",
+        )
+
     # Auto-extract metadata from the video file using ffprobe
     try:
         metadata = extract_video_metadata(task_data.file_path)
@@ -184,8 +195,10 @@ def extract_task_frames(task_id: int, fps: int = 1, db: Session = Depends(get_db
         "frame_count": len(frame_paths),
         "frames_dir": str(frames_dir),
         "fps": fps,
-        "sample_paths": frame_paths[:3],  # first 3 paths for verification
+        "sample_paths": frame_paths[:3],
     }
+
+
 @router.get("/{task_id}/frames")
 def get_task_frames(task_id: int, db: Session = Depends(get_db)):
     """
