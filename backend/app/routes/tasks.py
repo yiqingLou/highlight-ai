@@ -6,17 +6,18 @@ Endpoints:
   GET  /{id}                          - Get one task by ID (with related highlights)
   POST /                              - Create a new task (auto-extracts video metadata)
                                         Rejects duplicate file_path with 409 Conflict
-  POST /{id}/extract-frames           - Extract JPG frames from task's video
-                                        Updates task status: processing -> done (or failed)
-  GET  /{id}/frames                   - Query frame extraction status
+  POST /{id}/extract-frames           - Trigger frame extraction in background
+                                        Returns 202 Accepted immediately
+                                        Status updates: pending -> processing -> done/failed
+  GET  /{id}/frames                   - Query frame extraction status / count / paths
 """
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models import Task, Highlight
 from app.schemas.task import TaskListResponse, TaskDetailResponse, TaskCreate
 from app.services.video_processor import (
@@ -39,23 +40,48 @@ def update_task_status(
     progress: int = None,
     error_message: str = None,
 ) -> None:
-    """
-    Update a task's status and optionally progress / error_message.
-    Commits the change immediately.
-
-    Args:
-        db: SQLAlchemy session
-        task: Task ORM object
-        status: New status ("pending" | "processing" | "done" | "failed")
-        progress: Optional progress 0-100
-        error_message: Optional error message (only when status="failed")
-    """
+    """Update task status + commit immediately."""
     task.status = status
     if progress is not None:
         task.progress = progress
     if error_message is not None:
         task.error_message = error_message
     db.commit()
+
+
+def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
+    """
+    Background worker that does the actual frame extraction.
+    Opens its own DB session because the request's session is closed by the time this runs.
+    """
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is None:
+            return  # task disappeared, nothing to do
+
+        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        frames_dir = BACKEND_DIR / "frames" / str(task_id)
+
+        try:
+            extract_frames(
+                video_path=task.file_path,
+                output_dir=str(frames_dir),
+                fps=fps,
+            )
+        except FileNotFoundError as e:
+            update_task_status(db, task, status="failed", error_message=str(e))
+            return
+        except FileExistsError as e:
+            update_task_status(db, task, status="failed", error_message=str(e))
+            return
+        except VideoProbeError as e:
+            update_task_status(db, task, status="failed", error_message=str(e))
+            return
+
+        update_task_status(db, task, status="done", progress=100)
+    finally:
+        db.close()
 
 
 # ============================================
@@ -78,10 +104,7 @@ def get_task_by_id(task_id: int, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
 
     if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {task_id} not found",
-        )
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     highlights = db.query(Highlight).filter(Highlight.task_id == task_id).all()
 
@@ -104,19 +127,12 @@ def get_task_by_id(task_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================
-# POST endpoints (write operations)
+# POST endpoints
 # ============================================
 
 @router.post("/", response_model=TaskDetailResponse, status_code=201)
 def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
-    """
-    Create a new task with automatic video metadata extraction.
-
-    Errors:
-    - 409 if a task already exists for this file_path
-    - 400 if the file doesn't exist or isn't a valid video
-    """
-    # Check for duplicate
+    """Create a new task with automatic video metadata extraction."""
     existing = db.query(Task).filter(Task.file_path == task_data.file_path).first()
     if existing:
         raise HTTPException(
@@ -124,7 +140,6 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
             detail=f"Task already exists for this file_path (id={existing.id})",
         )
 
-    # Auto-extract metadata
     try:
         metadata = extract_video_metadata(task_data.file_path)
     except FileNotFoundError:
@@ -173,74 +188,54 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/{task_id}/extract-frames")
-def extract_task_frames(task_id: int, fps: int = 1, db: Session = Depends(get_db)):
+@router.post("/{task_id}/extract-frames", status_code=202)
+def extract_task_frames(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    fps: int = 1,
+    db: Session = Depends(get_db),
+):
     """
-    Extract frames from a task's video file using ffmpeg.
+    Trigger frame extraction in the background.
 
-    Status transitions:
-        pending -> processing (progress=30) -> done (progress=100)
-        or pending -> failed (with error_message)
+    Returns 202 Accepted immediately with status="processing".
+    The actual extraction runs asynchronously.
+    Poll GET /api/tasks/{id} or GET /api/tasks/{id}/frames to check progress.
 
     Errors:
         404 if task not found
-        400 if video file missing or ffmpeg fails
-        409 if frames already extracted for this task
+        409 if task already running or done (status != pending/failed)
     """
     # 1. Find the task
     task = db.query(Task).filter(Task.id == task_id).first()
     if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    # 2. Reject if currently processing (idempotency guard)
+    if task.status == "processing":
         raise HTTPException(
-            status_code=404,
-            detail=f"Task {task_id} not found",
+            status_code=409,
+            detail=f"Task {task_id} is already being processed",
         )
 
-    # 2. Mark as processing
-    update_task_status(db, task, status="processing", progress=30)
-
-    # 3. Decide where to store frames
-    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
-    frames_dir = BACKEND_DIR / "frames" / str(task_id)
-
-    # 4. Run extraction
-    try:
-        frame_paths = extract_frames(
-            video_path=task.file_path,
-            output_dir=str(frames_dir),
-            fps=fps,
-        )
-    except FileNotFoundError as e:
-        update_task_status(db, task, status="failed", error_message=str(e))
-        raise HTTPException(status_code=400, detail=str(e))
-    except FileExistsError as e:
-        update_task_status(db, task, status="failed", error_message=str(e))
-        raise HTTPException(status_code=409, detail=str(e))
-    except VideoProbeError as e:
-        update_task_status(db, task, status="failed", error_message=str(e))
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # 5. Success - mark as done
-    update_task_status(db, task, status="done", progress=100)
+    # 3. Mark as processing, then enqueue background task
+    update_task_status(db, task, status="processing", progress=10)
+    background_tasks.add_task(_run_frame_extraction_in_background, task_id, fps)
 
     return {
         "task_id": task_id,
-        "frame_count": len(frame_paths),
-        "frames_dir": str(frames_dir),
+        "status": "processing",
+        "message": "Frame extraction started in background. Poll for status.",
         "fps": fps,
-        "sample_paths": frame_paths[:3],
-        "status": "done",
     }
 
 
 @router.get("/{task_id}/frames")
 def get_task_frames(task_id: int, db: Session = Depends(get_db)):
-    """Get frame extraction status for a task."""
+    """Get frame extraction status + sample paths for a task."""
     task = db.query(Task).filter(Task.id == task_id).first()
     if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Task {task_id} not found",
-        )
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
     BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
     frames_dir = BACKEND_DIR / "frames" / str(task_id)
@@ -248,6 +243,8 @@ def get_task_frames(task_id: int, db: Session = Depends(get_db)):
     if not frames_dir.exists():
         return {
             "task_id": task_id,
+            "task_status": task.status,
+            "task_progress": task.progress,
             "extracted": False,
             "frame_count": 0,
             "frames_dir": str(frames_dir),
@@ -258,6 +255,8 @@ def get_task_frames(task_id: int, db: Session = Depends(get_db)):
 
     return {
         "task_id": task_id,
+        "task_status": task.status,
+        "task_progress": task.progress,
         "extracted": len(frame_files) > 0,
         "frame_count": len(frame_files),
         "frames_dir": str(frames_dir),
