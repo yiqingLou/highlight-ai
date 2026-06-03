@@ -2,7 +2,7 @@
 Tasks routes - /api/tasks/*
 
 Endpoints:
-  GET  /                              - List all tasks (with optional status filter)
+  GET  /                              - List all tasks (filter by status, game_type)
   GET  /{id}                          - Get one task by ID (with related highlights)
   POST /                              - Create a new task (auto-extracts video metadata)
                                         Rejects duplicate file_path with 409 Conflict
@@ -93,23 +93,28 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
 def get_tasks(
     db: Session = Depends(get_db),
     status: Optional[str] = None,
+    game_type: Optional[str] = None,
 ):
     """
     Return all tasks, sorted by most recent first.
 
-    Query params:
-        status: Optional filter by status ("pending" | "processing" | "done" | "failed")
+    Query params (all optional, combinable):
+        status: Filter by status ("pending" | "processing" | "done" | "failed")
+        game_type: Filter by game type (e.g. "naraka", "lol", "overwatch")
 
     Examples:
-        GET /api/tasks                  -> all tasks
-        GET /api/tasks?status=done       -> only completed tasks
-        GET /api/tasks?status=failed     -> only failed tasks
+        GET /api/tasks                              -> all tasks
+        GET /api/tasks?status=done                   -> only completed
+        GET /api/tasks?game_type=naraka              -> only Naraka tasks
+        GET /api/tasks?status=done&game_type=naraka  -> Naraka tasks that are done
     """
     query = db.query(Task)
 
-    # Apply status filter if provided
+    # Apply filters if provided (chained AND)
     if status is not None:
         query = query.filter(Task.status == status)
+    if game_type is not None:
+        query = query.filter(Task.game_type == game_type)
 
     tasks = query.order_by(Task.created_at.desc()).all()
 
