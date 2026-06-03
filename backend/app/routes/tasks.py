@@ -262,3 +262,74 @@ def get_task_frames(task_id: int, db: Session = Depends(get_db)):
         "frames_dir": str(frames_dir),
         "sample_paths": [str(f) for f in frame_files[:3]],
     }
+@router.get("/{task_id}/progress")
+def get_task_progress(task_id: int, db: Session = Depends(get_db)):
+    """
+    Get real-time progress of frame extraction for a task.
+
+    Calculates progress by counting JPG files in frames/{task_id}/
+    against expected total based on task.duration_sec * fps.
+
+    Returns:
+        task_id, status, progress (%)
+        progress_detail: {phase, current_frame, total_frames_expected, percent}
+
+    Errors:
+        404 if task not found
+    """
+    # 1. Find the task
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    # 2. Locate the frames directory
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    frames_dir = BACKEND_DIR / "frames" / str(task_id)
+
+    # 3. Count existing frames on disk
+    if frames_dir.exists():
+        current_frame_count = len(list(frames_dir.glob("frame_*.jpg")))
+    else:
+        current_frame_count = 0
+
+    # 4. Calculate expected total frames (duration_sec * fps, default fps=1)
+    expected_total = 0
+    if task.duration_sec:
+        # We extract at fps=1 by default; future: store actual fps used per task
+        expected_total = int(task.duration_sec * 1)
+
+    # 5. Compute percent
+    if task.status == "done":
+        percent = 100
+    elif task.status == "failed":
+        percent = 0
+    elif expected_total > 0:
+        percent = int((current_frame_count / expected_total) * 100)
+        percent = min(percent, 99)  # cap at 99 until worker marks done
+    else:
+        percent = 0
+
+    # 6. Determine phase label
+    if task.status == "pending":
+        phase = "waiting"
+    elif task.status == "processing":
+        phase = "extracting_frames"
+    elif task.status == "done":
+        phase = "completed"
+    elif task.status == "failed":
+        phase = "failed"
+    else:
+        phase = "unknown"
+
+    return {
+        "task_id": task_id,
+        "status": task.status,
+        "progress": percent,
+        "progress_detail": {
+            "phase": phase,
+            "current_frame": current_frame_count,
+            "total_frames_expected": expected_total,
+            "percent": percent,
+        },
+        "error_message": task.error_message,
+    }
