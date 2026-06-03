@@ -2,17 +2,18 @@
 Tasks routes - /api/tasks/*
 
 Endpoints:
-  GET  /                              - List all tasks
+  GET  /                              - List all tasks (with optional status filter)
   GET  /{id}                          - Get one task by ID (with related highlights)
   POST /                              - Create a new task (auto-extracts video metadata)
                                         Rejects duplicate file_path with 409 Conflict
   POST /{id}/extract-frames           - Trigger frame extraction in background
                                         Returns 202 Accepted immediately
-                                        Status updates: pending -> processing -> done/failed
   GET  /{id}/frames                   - Query frame extraction status / count / paths
+  GET  /{id}/progress                 - Real-time extraction progress
 """
 
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -51,14 +52,14 @@ def update_task_status(
 
 def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
     """
-    Background worker that does the actual frame extraction.
-    Opens its own DB session because the request's session is closed by the time this runs.
+    Background worker for frame extraction.
+    Opens its own DB session (request session is closed by the time this runs).
     """
     db = SessionLocal()
     try:
         task = db.query(Task).filter(Task.id == task_id).first()
         if task is None:
-            return  # task disappeared, nothing to do
+            return
 
         BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
         frames_dir = BACKEND_DIR / "frames" / str(task_id)
@@ -89,9 +90,29 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
 # ============================================
 
 @router.get("/", response_model=TaskListResponse)
-def get_tasks(db: Session = Depends(get_db)):
-    """Return all tasks, sorted by most recent first."""
-    tasks = db.query(Task).order_by(Task.created_at.desc()).all()
+def get_tasks(
+    db: Session = Depends(get_db),
+    status: Optional[str] = None,
+):
+    """
+    Return all tasks, sorted by most recent first.
+
+    Query params:
+        status: Optional filter by status ("pending" | "processing" | "done" | "failed")
+
+    Examples:
+        GET /api/tasks                  -> all tasks
+        GET /api/tasks?status=done       -> only completed tasks
+        GET /api/tasks?status=failed     -> only failed tasks
+    """
+    query = db.query(Task)
+
+    # Apply status filter if provided
+    if status is not None:
+        query = query.filter(Task.status == status)
+
+    tasks = query.order_by(Task.created_at.desc()).all()
+
     return {
         "tasks": tasks,
         "total": len(tasks),
@@ -197,28 +218,18 @@ def extract_task_frames(
 ):
     """
     Trigger frame extraction in the background.
-
     Returns 202 Accepted immediately with status="processing".
-    The actual extraction runs asynchronously.
-    Poll GET /api/tasks/{id} or GET /api/tasks/{id}/frames to check progress.
-
-    Errors:
-        404 if task not found
-        409 if task already running or done (status != pending/failed)
     """
-    # 1. Find the task
     task = db.query(Task).filter(Task.id == task_id).first()
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    # 2. Reject if currently processing (idempotency guard)
     if task.status == "processing":
         raise HTTPException(
             status_code=409,
             detail=f"Task {task_id} is already being processed",
         )
 
-    # 3. Mark as processing, then enqueue background task
     update_task_status(db, task, status="processing", progress=10)
     background_tasks.add_task(_run_frame_extraction_in_background, task_id, fps)
 
@@ -262,54 +273,37 @@ def get_task_frames(task_id: int, db: Session = Depends(get_db)):
         "frames_dir": str(frames_dir),
         "sample_paths": [str(f) for f in frame_files[:3]],
     }
+
+
 @router.get("/{task_id}/progress")
 def get_task_progress(task_id: int, db: Session = Depends(get_db)):
-    """
-    Get real-time progress of frame extraction for a task.
-
-    Calculates progress by counting JPG files in frames/{task_id}/
-    against expected total based on task.duration_sec * fps.
-
-    Returns:
-        task_id, status, progress (%)
-        progress_detail: {phase, current_frame, total_frames_expected, percent}
-
-    Errors:
-        404 if task not found
-    """
-    # 1. Find the task
+    """Real-time progress of frame extraction for a task."""
     task = db.query(Task).filter(Task.id == task_id).first()
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    # 2. Locate the frames directory
     BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
     frames_dir = BACKEND_DIR / "frames" / str(task_id)
 
-    # 3. Count existing frames on disk
     if frames_dir.exists():
         current_frame_count = len(list(frames_dir.glob("frame_*.jpg")))
     else:
         current_frame_count = 0
 
-    # 4. Calculate expected total frames (duration_sec * fps, default fps=1)
     expected_total = 0
     if task.duration_sec:
-        # We extract at fps=1 by default; future: store actual fps used per task
         expected_total = int(task.duration_sec * 1)
 
-    # 5. Compute percent
     if task.status == "done":
         percent = 100
     elif task.status == "failed":
         percent = 0
     elif expected_total > 0:
         percent = int((current_frame_count / expected_total) * 100)
-        percent = min(percent, 99)  # cap at 99 until worker marks done
+        percent = min(percent, 99)
     else:
         percent = 0
 
-    # 6. Determine phase label
     if task.status == "pending":
         phase = "waiting"
     elif task.status == "processing":
