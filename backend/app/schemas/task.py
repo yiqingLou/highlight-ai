@@ -42,22 +42,26 @@ class TaskDetailResponse(BaseModel):
 
 
 class TaskListResponse(BaseModel):
-    """Wrapper for list endpoint."""
+    """
+    Response for GET /api/tasks/.
+
+    Fields:
+        tasks: This page's tasks (limited by ?limit=)
+        total: Number in this response (len of tasks)
+        total_count: Total in database matching the filter (across all pages)
+        skip: How many records were skipped
+        limit: Page size used
+    """
     tasks: list[TaskResponse]
     total: int
-
+    total_count: int
+    skip: int
+    limit: int
 
 
 class TaskCreate(BaseModel):
     """
     Schema for creating a new task (POST /api/tasks request body).
-    
-    Required fields the user must provide:
-    - file_path: where the video file lives on disk
-    - file_name: filename for display
-    
-    Optional fields (have defaults or can be None):
-    - file_size, duration_sec, width, height, fps, game_type
     """
     file_path: str
     file_name: str
