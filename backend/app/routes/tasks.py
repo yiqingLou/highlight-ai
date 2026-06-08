@@ -24,6 +24,7 @@ from app.services.video_processor import (
     extract_frames,
     VideoProbeError,
 )
+from app.game_profiles.base import get_profile
 
 router = APIRouter()
 
@@ -49,7 +50,18 @@ def update_task_status(
 
 
 def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
-    """Background worker for frame extraction."""
+    """
+    Background worker: extract frames, then run highlight detection.
+
+    Pipeline:
+        1. Extract frames from the video (ffmpeg)
+        2. Load the game profile plugin for this task's game_type
+        3. Detect highlights from the frames (fake data at MVP stage)
+        4. Store detected highlights in the DB
+        5. Mark task as done
+
+    Any failure marks the task as failed with an error message.
+    """
     db = SessionLocal()
     try:
         task = db.query(Task).filter(Task.id == task_id).first()
@@ -59,8 +71,9 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
         BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
         frames_dir = BACKEND_DIR / "frames" / str(task_id)
 
+        # --- Step 1: extract frames (capture the returned paths) ---
         try:
-            extract_frames(
+            frame_paths = extract_frames(
                 video_path=task.file_path,
                 output_dir=str(frames_dir),
                 fps=fps,
@@ -75,7 +88,55 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
             update_task_status(db, task, status="failed", error_message=str(e))
             return
 
+        # --- Step 2: load the game profile plugin ---
+        try:
+            profile = get_profile(task.game_type)
+        except ValueError as e:
+            # game_type not supported / not registered
+            update_task_status(db, task, status="failed", error_message=str(e))
+            return
+
+        # --- Step 3: detect highlights ---
+        # fps here is the extraction fps (frames sampled per second), which is
+        # exactly what detect_highlights expects to convert frame index -> seconds.
+        try:
+            detected = profile.detect_highlights(frame_paths, fps=float(fps))
+        except Exception as e:
+            update_task_status(
+                db, task, status="failed",
+                error_message=f"Highlight detection failed: {e}",
+            )
+            return
+
+        # --- Step 4: store detected highlights in the DB ---
+        # Clear any existing highlights for this task first (idempotent re-runs).
+        db.query(Highlight).filter(Highlight.task_id == task_id).delete()
+
+        for sort_idx, dh in enumerate(detected):
+            # Convert center + duration -> [start, end], clamp start at 0.
+            start_sec = max(0.0, dh.center_sec - dh.duration_sec / 2)
+            end_sec = dh.center_sec + dh.duration_sec / 2
+
+            # confidence (0.0-1.0) -> score (0-100)
+            score_100 = int(round(dh.confidence * 100))
+
+            highlight = Highlight(
+                task_id=task_id,
+                start_sec=round(start_sec, 2),
+                end_sec=round(end_sec, 2),
+                score=score_100,
+                score_visual=score_100,   # MVP: visual-based game, fill visual score
+                label=dh.kind,
+                reason=str(dh.meta),      # e.g. "{'source': 'fake_mvp', 'frame_index': 25}"
+                sort_order=sort_idx,
+            )
+            db.add(highlight)
+
+        db.commit()
+
+        # --- Step 5: mark task done ---
         update_task_status(db, task, status="done", progress=100)
+
     finally:
         db.close()
 
