@@ -10,6 +10,7 @@ Endpoints:
   GET  /{id}/progress                 - Real-time extraction progress
 """
 
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -49,11 +50,26 @@ def update_task_status(
     db.commit()
 
 
+def _clear_frames_dir(frames_dir: Path) -> None:
+    """
+    Safely remove an existing per-task frames directory before re-extracting.
+
+    This makes re-running extraction idempotent: a previous run's frames no
+    longer cause extract_frames() to fail on a non-empty directory.
+
+    Safety: only ever deletes the specific per-task directory passed in.
+    """
+    # Guard: only delete if it exists and is a directory (never touch files).
+    if frames_dir.exists() and frames_dir.is_dir():
+        shutil.rmtree(frames_dir)
+
+
 def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
     """
     Background worker: extract frames, then run highlight detection.
 
     Pipeline:
+        0. Clear any existing frames for this task (idempotent re-runs)
         1. Extract frames from the video (ffmpeg)
         2. Load the game profile plugin for this task's game_type
         3. Detect highlights from the frames (fake data at MVP stage)
@@ -70,6 +86,9 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
 
         BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
         frames_dir = BACKEND_DIR / "frames" / str(task_id)
+
+        # --- Step 0: clear old frames so re-runs start clean ---
+        _clear_frames_dir(frames_dir)
 
         # --- Step 1: extract frames (capture the returned paths) ---
         try:
