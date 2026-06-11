@@ -11,7 +11,7 @@ To add a new game:
     1. Create a new file in this package (e.g. valorant.py)
     2. Subclass GameProfile, set game_id / display_name
     3. Implement detect_highlights()
-    4. Register it in the _REGISTRY dict below
+    4. Register it in the registry inside get_profile() below
 """
 
 from abc import ABC, abstractmethod
@@ -115,9 +115,11 @@ def get_profile(game_type: str) -> GameProfile:
     """
     # Lazy import to avoid circular dependencies at module load time
     from .naraka import NarakaProfile
+    from .lol import LolProfile
 
     registry: dict[str, type[GameProfile]] = {
         "naraka": NarakaProfile,
+        "lol": LolProfile,
     }
 
     profile_cls = registry.get(game_type)
@@ -141,8 +143,9 @@ def list_supported_games() -> list[dict]:
         List of dicts: [{"game_id": ..., "display_name": ...}, ...]
     """
     from .naraka import NarakaProfile
+    from .lol import LolProfile
 
-    profiles: list[type[GameProfile]] = [NarakaProfile]
+    profiles: list[type[GameProfile]] = [NarakaProfile, LolProfile]
     return [
         {"game_id": p.game_id, "display_name": p.display_name}
         for p in profiles
