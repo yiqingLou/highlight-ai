@@ -6,10 +6,11 @@ For the Chinese (国服) client, the kill banner contains the fixed substring
 "击杀了" (e.g. "PlayerA 击杀了 PlayerB!").
 
 Detection strategy:
-    For each extracted frame, run OCR and check for the kill keyword.
-    Consecutive hits within DEDUP_SECONDS are treated as the SAME kill
-    (the banner stays on screen for a few seconds), so they are merged
-    into a single highlight.
+    Run OCR on every frame and mark which frames contain the kill keyword.
+    The banner stays on screen for several seconds, so many consecutive
+    frames hit. We GROUP consecutive hits into one kill event: a new event
+    only starts after a gap of >= GAP_SECONDS with no hits. Each group
+    becomes a single highlight centered on the group's middle.
 """
 
 from .base import GameProfile, DetectedHighlight
@@ -26,8 +27,11 @@ class LolProfile(GameProfile):
     # "적을 처치했습니다" (KR), "You have slain" / "killed" (EN).
     KILL_KEYWORDS = ["击杀了", "你已经击杀了"]
 
-    # Hits closer than this many seconds are treated as the same kill.
-    DEDUP_SECONDS = 3.0
+    # A new kill event starts only after this many seconds with no hits.
+    # The banner persists for several seconds, so consecutive hits within
+    # this gap are treated as ONE kill event (avoids splitting one banner
+    # into many highlights).
+    GAP_SECONDS = 5.0
 
     # Clip length around each detected kill.
     CLIP_DURATION = 8.0
@@ -38,7 +42,7 @@ class LolProfile(GameProfile):
         fps: float,
     ) -> list[DetectedHighlight]:
         """
-        Detect kills by OCR-scanning each frame for the kill keyword.
+        Detect kills by OCR-scanning frames and grouping consecutive hits.
 
         Args:
             frame_paths: Ordered list of extracted frame image paths.
@@ -46,39 +50,54 @@ class LolProfile(GameProfile):
                  frame index to a timestamp.
 
         Returns:
-            List of DetectedHighlight (deduplicated), sorted by center_sec.
+            List of DetectedHighlight (one per kill event), sorted by center_sec.
         """
         if not frame_paths:
             return []
 
-        highlights: list[DetectedHighlight] = []
-        last_kill_sec = None  # timestamp of the previous accepted kill
-
+        # 1. Find timestamps of all frames that contain a kill keyword.
+        hit_times: list[float] = []
         for frame_index, frame_path in enumerate(frame_paths):
-            # Check if any kill keyword appears in this frame.
             hit = any(
                 contains_keyword(frame_path, kw)
                 for kw in self.KILL_KEYWORDS
             )
-            if not hit:
-                continue
+            if hit:
+                hit_times.append(self.frame_index_to_sec(frame_index, fps))
 
-            center_sec = self.frame_index_to_sec(frame_index, fps)
+        if not hit_times:
+            return []
 
-            # Dedup: skip if too close to the previous accepted kill.
-            if last_kill_sec is not None and (center_sec - last_kill_sec) < self.DEDUP_SECONDS:
-                continue
+        # 2. Group consecutive hits into kill events.
+        #    A gap >= GAP_SECONDS between two hits starts a new event.
+        groups: list[list[float]] = []
+        current_group: list[float] = [hit_times[0]]
+        for t in hit_times[1:]:
+            if t - current_group[-1] >= self.GAP_SECONDS:
+                groups.append(current_group)
+                current_group = [t]
+            else:
+                current_group.append(t)
+        groups.append(current_group)
 
+        # 3. One highlight per group, centered on the middle of the group.
+        highlights: list[DetectedHighlight] = []
+        for group in groups:
+            center_sec = (group[0] + group[-1]) / 2
             highlights.append(
                 DetectedHighlight(
                     center_sec=round(center_sec, 2),
                     duration_sec=self.CLIP_DURATION,
                     kind="kill",
                     confidence=0.9,  # OCR keyword match is fairly reliable
-                    meta={"source": "ocr", "frame_index": frame_index},
+                    meta={
+                        "source": "ocr",
+                        "hit_count": len(group),
+                        "first_hit_sec": round(group[0], 2),
+                        "last_hit_sec": round(group[-1], 2),
+                    },
                 )
             )
-            last_kill_sec = center_sec
 
         highlights.sort(key=lambda h: h.center_sec)
         return highlights
