@@ -17,3 +17,8 @@ pydantic==2.13.4
 torch==2.11.0+cu128
 torchvision==0.26.0+cu128
 torchaudio==2.11.0+cu128
+
+# --- OCR (LOL kill detection) ---
+# easyocr depends on torch; install AFTER the cu128 torch above so it
+# reuses the GPU build instead of pulling a CPU-only torch.
+easyocr==1.7.2
