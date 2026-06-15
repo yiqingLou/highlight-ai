@@ -1,16 +1,21 @@
 """
 League of Legends (LOL) game profile.
 
-Detects kill events by reading the on-screen kill banner with OCR.
-For the Chinese (国服) client, the kill banner contains the fixed substring
-"击杀了" (e.g. "PlayerA 击杀了 PlayerB!").
+Detects YOUR OWN kills by reading the center-screen first-person kill banner
+with OCR. For the Chinese (国服) client this banner reads
+"你已经击杀了一名敌方英雄！" and appears ONLY when you get a kill.
+
+Why not the keyword "击杀了"? Because the bottom-left kill feed shows EVERY
+player's kills ("Berdinox击杀了Gogeta UI"), plus "友方被杀" (ally died). Those
+are not your highlights. The center first-person banner ("你已经击杀") is the
+reliable signal that the kill is YOURS. The OCR crop region (top-center, set
+in ocr_detector) also physically excludes the bottom-left kill feed.
 
 Detection strategy:
     Run OCR on every frame and mark which frames contain the kill keyword.
     The banner stays on screen for several seconds, so many consecutive
     frames hit. We GROUP consecutive hits into one kill event: a new event
-    only starts after a gap of >= GAP_SECONDS with no hits. Each group
-    becomes a single highlight centered on the group's middle.
+    only starts after a gap of >= GAP_SECONDS with no hits.
 """
 
 from .base import GameProfile, DetectedHighlight
@@ -23,14 +28,14 @@ class LolProfile(GameProfile):
     game_id = "lol"
     display_name = "League of Legends"
 
-    # Kill banner keyword(s). Add other-server variants here later, e.g.
-    # "적을 처치했습니다" (KR), "You have slain" / "killed" (EN).
-    KILL_KEYWORDS = ["击杀了", "你已经击杀了"]
+    # Center-screen first-person kill banner(s) = YOUR kill.
+    # Use a short substring ("你已经击杀") to tolerate OCR dropping the tail
+    # ("了一名敌方英雄！"). Do NOT use the broad "击杀了" — the kill feed is
+    # full of other players' kills. Multi-kill upgrade (双杀/三杀) is a future
+    # second layer, gated behind this anchor.
+    KILL_KEYWORDS = ["你已经击杀"]
 
     # A new kill event starts only after this many seconds with no hits.
-    # The banner persists for several seconds, so consecutive hits within
-    # this gap are treated as ONE kill event (avoids splitting one banner
-    # into many highlights).
     GAP_SECONDS = 5.0
 
     # Clip length around each detected kill.
@@ -42,7 +47,7 @@ class LolProfile(GameProfile):
         fps: float,
     ) -> list[DetectedHighlight]:
         """
-        Detect kills by OCR-scanning frames and grouping consecutive hits.
+        Detect your kills by OCR-scanning frames and grouping consecutive hits.
 
         Args:
             frame_paths: Ordered list of extracted frame image paths.
@@ -89,7 +94,7 @@ class LolProfile(GameProfile):
                     center_sec=round(center_sec, 2),
                     duration_sec=self.CLIP_DURATION,
                     kind="kill",
-                    confidence=0.9,  # OCR keyword match is fairly reliable
+                    confidence=0.9,
                     meta={
                         "source": "ocr",
                         "hit_count": len(group),
