@@ -8,8 +8,11 @@ Endpoints:
   POST /{id}/extract-frames           - Trigger frame extraction (background, 202 Accepted)
   GET  /{id}/frames                   - Query frame extraction result
   GET  /{id}/progress                 - Real-time extraction progress
+  POST /{id}/generate-clips           - Cut high-score highlights into clips (background, 202)
+  GET  /{id}/clips                    - List generated clips for a task
 """
 
+import json
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -18,16 +21,22 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
-from app.models import Task, Highlight
+from app.models import Task, Highlight, Clip
 from app.schemas.task import TaskListResponse, TaskDetailResponse, TaskCreate
 from app.services.video_processor import (
     extract_video_metadata,
     extract_frames,
     VideoProbeError,
 )
+from app.services.clip_assembler import cut_clip, get_clip_file_size
 from app.game_profiles.base import get_profile
 
 router = APIRouter()
+
+# Only highlights scoring at/above this are cut into clips (i.e. multi-kills:
+# double_kill=93, shutdown=95, triple_kill=96, quadra=98, penta=100).
+# Plain single kills (90) are skipped to keep clips focused on the exciting moments.
+MIN_CLIP_SCORE = 93
 
 
 # ============================================
@@ -155,6 +164,89 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
 
         # --- Step 5: mark task done ---
         update_task_status(db, task, status="done", progress=100)
+
+    finally:
+        db.close()
+
+
+def _clear_clips_dir(clips_dir: Path) -> None:
+    """
+    Safely remove an existing per-task clips directory before regenerating.
+
+    Makes re-running clip generation idempotent. Only ever deletes the
+    specific per-task directory passed in.
+    """
+    if clips_dir.exists() and clips_dir.is_dir():
+        shutil.rmtree(clips_dir)
+
+
+def _run_clip_generation_in_background(task_id: int) -> None:
+    """
+    Background worker: cut high-score highlights into individual clip files.
+
+    Pipeline:
+        0. Clear any existing clips for this task (idempotent re-runs)
+        1. Load the task's highlights scoring >= MIN_CLIP_SCORE
+        2. Cut each one out of the source video with ffmpeg (one clip per highlight)
+        3. Store each clip's metadata in the Clip table
+
+    Errors on a single clip are skipped (best-effort), so one bad highlight
+    does not abort the whole batch.
+    """
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is None:
+            return
+
+        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        clips_dir = BACKEND_DIR / "clips" / str(task_id)
+
+        # --- Step 0: clear old clips (DB rows + files) for clean re-runs ---
+        db.query(Clip).filter(Clip.task_id == task_id).delete()
+        db.commit()
+        _clear_clips_dir(clips_dir)
+        clips_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- Step 1: load high-score highlights, best first ---
+        highlights = (
+            db.query(Highlight)
+            .filter(Highlight.task_id == task_id)
+            .filter(Highlight.score >= MIN_CLIP_SCORE)
+            .order_by(Highlight.score.desc())
+            .all()
+        )
+
+        resolution = None
+        if task.width and task.height:
+            resolution = f"{task.width}x{task.height}"
+
+        # --- Step 2 & 3: cut each highlight, store Clip row ---
+        for idx, hl in enumerate(highlights):
+            output_path = clips_dir / f"clip_{idx:03d}_{hl.label}.mp4"
+
+            try:
+                cut_clip(
+                    video_path=task.file_path,
+                    start_sec=hl.start_sec,
+                    end_sec=hl.end_sec,
+                    output_path=str(output_path),
+                )
+            except (FileNotFoundError, ValueError, VideoProbeError):
+                # Skip this highlight on failure; keep processing the rest.
+                continue
+
+            clip = Clip(
+                task_id=task_id,
+                output_path=str(output_path),
+                file_size=get_clip_file_size(str(output_path)),
+                duration_sec=round(hl.end_sec - hl.start_sec, 2),
+                resolution=resolution,
+                highlight_ids=json.dumps([hl.id]),  # one highlight per clip (MVP)
+            )
+            db.add(clip)
+
+        db.commit()
 
     finally:
         db.close()
@@ -341,6 +433,47 @@ def extract_task_frames(
     }
 
 
+@router.post("/{task_id}/generate-clips", status_code=202)
+def generate_task_clips(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Cut this task's high-score highlights (score >= MIN_CLIP_SCORE) into clip
+    files, in the background. Returns 202 Accepted.
+
+    Requires the task to have detected highlights already (run detection first).
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    eligible = (
+        db.query(Highlight)
+        .filter(Highlight.task_id == task_id)
+        .filter(Highlight.score >= MIN_CLIP_SCORE)
+        .count()
+    )
+    if eligible == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Task {task_id} has no highlights scoring >= {MIN_CLIP_SCORE}. "
+                f"Run detection first, or lower the threshold."
+            ),
+        )
+
+    background_tasks.add_task(_run_clip_generation_in_background, task_id)
+
+    return {
+        "task_id": task_id,
+        "status": "generating_clips",
+        "message": f"Cutting {eligible} clip(s) in background. Poll GET /{task_id}/clips.",
+        "min_score": MIN_CLIP_SCORE,
+    }
+
+
 @router.get("/{task_id}/frames")
 def get_task_frames(task_id: int, db: Session = Depends(get_db)):
     """Get frame extraction status + sample paths for a task."""
@@ -372,6 +505,37 @@ def get_task_frames(task_id: int, db: Session = Depends(get_db)):
         "frame_count": len(frame_files),
         "frames_dir": str(frames_dir),
         "sample_paths": [str(f) for f in frame_files[:3]],
+    }
+
+
+@router.get("/{task_id}/clips")
+def get_task_clips(task_id: int, db: Session = Depends(get_db)):
+    """List generated clips for a task."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    clips = (
+        db.query(Clip)
+        .filter(Clip.task_id == task_id)
+        .order_by(Clip.id)
+        .all()
+    )
+
+    return {
+        "task_id": task_id,
+        "clip_count": len(clips),
+        "clips": [
+            {
+                "id": c.id,
+                "output_path": c.output_path,
+                "file_size": c.file_size,
+                "duration_sec": c.duration_sec,
+                "resolution": c.resolution,
+                "highlight_ids": json.loads(c.highlight_ids) if c.highlight_ids else [],
+            }
+            for c in clips
+        ],
     }
 
 
