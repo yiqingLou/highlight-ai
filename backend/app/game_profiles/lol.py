@@ -1,21 +1,23 @@
 """
 League of Legends (LOL) game profile.
 
-Detects YOUR OWN kills by reading the center-screen first-person kill banner
-with OCR. For the Chinese (国服) client this banner reads
-"你已经击杀了一名敌方英雄！" and appears ONLY when you get a kill.
+Detects YOUR OWN kills by reading the center-screen first-person kill banners
+with OCR. For the Chinese (国服) client, these banners appear ONLY for your
+own kills (the bottom-left kill feed showing other players is excluded by the
+OCR crop region in ocr_detector).
 
-Why not the keyword "击杀了"? Because the bottom-left kill feed shows EVERY
-player's kills ("Berdinox击杀了Gogeta UI"), plus "友方被杀" (ally died). Those
-are not your highlights. The center first-person banner ("你已经击杀") is the
-reliable signal that the kill is YOURS. The OCR crop region (top-center, set
-in ocr_detector) also physically excludes the bottom-left kill feed.
+Two layers of detection:
+  Layer 1 (anchor): "你已经击杀" = you got a kill. This is the reliable signal.
+  Layer 2 (upgrade): "双杀"/"三杀"/"四杀"/"五杀"/"终结" appear center-screen during
+      multi-kills. Because the crop excludes the kill feed, a multi-kill word in
+      the cropped region belongs to YOU. We use it to upgrade the highlight's
+      label and score (a triple kill is more exciting than a single kill).
 
 Detection strategy:
-    Run OCR on every frame and mark which frames contain the kill keyword.
-    The banner stays on screen for several seconds, so many consecutive
-    frames hit. We GROUP consecutive hits into one kill event: a new event
-    only starts after a gap of >= GAP_SECONDS with no hits.
+    Run OCR on every frame and record which keyword(s) hit and when. Consecutive
+    hits (banners persist for seconds) are GROUPED into one kill event; a new
+    event starts only after a gap of >= GAP_SECONDS with no hits. Each group
+    becomes one highlight, labelled/scored by the HIGHEST-tier keyword in it.
 """
 
 from .base import GameProfile, DetectedHighlight
@@ -28,12 +30,24 @@ class LolProfile(GameProfile):
     game_id = "lol"
     display_name = "League of Legends"
 
-    # Center-screen first-person kill banner(s) = YOUR kill.
-    # Use a short substring ("你已经击杀") to tolerate OCR dropping the tail
-    # ("了一名敌方英雄！"). Do NOT use the broad "击杀了" — the kill feed is
-    # full of other players' kills. Multi-kill upgrade (双杀/三杀) is a future
-    # second layer, gated behind this anchor.
-    KILL_KEYWORDS = ["你已经击杀"]
+    # Anchor keyword: presence means "you got a kill".
+    SINGLE_KILL_KEYWORD = "你已经击杀"
+
+    # Multi-kill / special kill keywords -> (label, score). Higher tier = more
+    # exciting. Because the OCR crop excludes the bottom-left kill feed, these
+    # center-screen words belong to the player. Order does not matter here; we
+    # pick the highest-scoring one found in a group.
+    KILL_TIERS = {
+        "你已经击杀": ("kill", 90),
+        "双杀": ("double_kill", 93),
+        "三杀": ("triple_kill", 96),
+        "四杀": ("quadra_kill", 98),
+        "五杀": ("penta_kill", 100),
+        "终结": ("shutdown", 95),
+    }
+
+    # All keywords to scan for (anchor + all tiers).
+    KILL_KEYWORDS = list(KILL_TIERS.keys())
 
     # A new kill event starts only after this many seconds with no hits.
     GAP_SECONDS = 5.0
@@ -47,7 +61,7 @@ class LolProfile(GameProfile):
         fps: float,
     ) -> list[DetectedHighlight]:
         """
-        Detect your kills by OCR-scanning frames and grouping consecutive hits.
+        Detect your kills (with multi-kill upgrade) by OCR-scanning frames.
 
         Args:
             frame_paths: Ordered list of extracted frame image paths.
@@ -60,46 +74,62 @@ class LolProfile(GameProfile):
         if not frame_paths:
             return []
 
-        # 1. Find timestamps of all frames that contain a kill keyword.
-        hit_times: list[float] = []
+        # 1. For each frame, record (timestamp, set of keywords found).
+        #    A frame may contain more than one keyword (e.g. "你已经击杀" and
+        #    "双杀" could co-occur), so we collect all matches.
+        hits: list[tuple[float, set[str]]] = []
         for frame_index, frame_path in enumerate(frame_paths):
-            hit = any(
-                contains_keyword(frame_path, kw)
-                for kw in self.KILL_KEYWORDS
-            )
-            if hit:
-                hit_times.append(self.frame_index_to_sec(frame_index, fps))
+            found = {
+                kw for kw in self.KILL_KEYWORDS
+                if contains_keyword(frame_path, kw)
+            }
+            if found:
+                sec = self.frame_index_to_sec(frame_index, fps)
+                hits.append((sec, found))
 
-        if not hit_times:
+        if not hits:
             return []
 
-        # 2. Group consecutive hits into kill events.
-        #    A gap >= GAP_SECONDS between two hits starts a new event.
-        groups: list[list[float]] = []
-        current_group: list[float] = [hit_times[0]]
-        for t in hit_times[1:]:
-            if t - current_group[-1] >= self.GAP_SECONDS:
-                groups.append(current_group)
-                current_group = [t]
+        # 2. Group consecutive hits into kill events (gap >= GAP_SECONDS splits).
+        groups: list[list[tuple[float, set[str]]]] = []
+        current: list[tuple[float, set[str]]] = [hits[0]]
+        for sec, found in hits[1:]:
+            if sec - current[-1][0] >= self.GAP_SECONDS:
+                groups.append(current)
+                current = [(sec, found)]
             else:
-                current_group.append(t)
-        groups.append(current_group)
+                current.append((sec, found))
+        groups.append(current)
 
-        # 3. One highlight per group, centered on the middle of the group.
+        # 3. One highlight per group; label/score by the highest-tier keyword.
         highlights: list[DetectedHighlight] = []
         for group in groups:
-            center_sec = (group[0] + group[-1]) / 2
+            times = [sec for sec, _ in group]
+            center_sec = (times[0] + times[-1]) / 2
+
+            # Collect every keyword seen anywhere in this group.
+            all_keywords: set[str] = set()
+            for _, found in group:
+                all_keywords |= found
+
+            # Pick the highest-scoring keyword as this event's tier.
+            best_kw = max(all_keywords, key=lambda kw: self.KILL_TIERS[kw][1])
+            label, score = self.KILL_TIERS[best_kw]
+
             highlights.append(
                 DetectedHighlight(
                     center_sec=round(center_sec, 2),
                     duration_sec=self.CLIP_DURATION,
-                    kind="kill",
-                    confidence=0.9,
+                    kind=label,
+                    confidence=round(score / 100, 2),
                     meta={
                         "source": "ocr",
+                        "tier": label,
+                        "score": score,
+                        "keywords": sorted(all_keywords),
                         "hit_count": len(group),
-                        "first_hit_sec": round(group[0], 2),
-                        "last_hit_sec": round(group[-1], 2),
+                        "first_hit_sec": round(times[0], 2),
+                        "last_hit_sec": round(times[-1], 2),
                     },
                 )
             )
