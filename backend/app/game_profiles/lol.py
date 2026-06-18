@@ -2,28 +2,33 @@
 League of Legends (LOL) game profile.
 
 Detects YOUR OWN kills by reading the center-screen first-person kill banner
-"你已经击杀了一名敌方英雄" with OCR. This banner appears ONLY when YOU get a
-kill (it is first-person), making it a reliable anchor.
+"你已经击杀了一名敌方英雄" with OCR (the reliable first-person anchor), then
+upgrades the kill to a multi-kill tier ONLY when the multi-kill banner in that
+frame belongs to YOU.
 
-Multi-kill banners ("双杀"/"三杀"/"四杀"/"五杀"/"终结") are NOT first-person:
-LoL broadcasts them to everyone's screen when ANY player gets a multi-kill, so
-the word alone cannot tell whose kill it is. Therefore multi-kill words only
-UPGRADE a kill that is already anchored by a nearby "你已经击杀". A multi-kill
-word with no anchor nearby belongs to another player and is ignored.
+Why the portrait check (method C): multi-kill banners ("双杀"/"三杀"/"终结") are
+broadcast to everyone's screen for ANY player's multi-kill, so the keyword alone
+cannot tell whose kill it is. In team fights, another player's multi-kill banner
+can appear near your own "你已经击杀" anchor and wrongly upgrade your kill. To fix
+this, we check the banner's killer portrait against your HUD champion portrait
+(portrait_matcher): only upgrade if they match (the multi-kill is yours).
 
-Your own multi-kill always starts with "你已经击杀" (1st kill) and then escalates
-to "双杀" (2nd), "三杀" (3rd), etc., so the anchor is present for your multi-kills.
+Your own multi-kill always starts with "你已经击杀" (1st kill) and escalates to
+"双杀" (2nd), "三杀" (3rd)... so the anchor is present for your multi-kills.
 
 Detection strategy:
-    1. OCR every frame, recording which keyword(s) hit and when.
-    2. Group consecutive "你已经击杀" anchors into kill events (gap >= GAP_SECONDS).
-    3. For each event, look within UPGRADE_WINDOW seconds of the event for
-       multi-kill words and upgrade the label/score to the highest tier found.
-    4. Multi-kill words with no anchor nearby are discarded (other players').
+    1. OCR every frame: record "你已经击杀" anchor times, and multi-kill word hits
+       together with the frame path (needed for the portrait check).
+    2. Keep only the multi-kill hits whose banner portrait matches your HUD
+       champion (is_player_multikill) -> these are YOUR multi-kills.
+    3. Group consecutive anchors into kill events (gap >= GAP_SECONDS).
+    4. Upgrade each event to the highest tier among YOUR multi-kill words within
+       UPGRADE_WINDOW seconds of the event. No match -> plain kill.
 """
 
 from .base import GameProfile, DetectedHighlight
 from app.services.ocr_detector import contains_keyword
+from app.services.portrait_matcher import is_player_multikill
 
 
 class LolProfile(GameProfile):
@@ -35,8 +40,8 @@ class LolProfile(GameProfile):
     # First-person anchor: ONLY this proves the kill is yours.
     ANCHOR_KEYWORD = "你已经击杀"
 
-    # Multi-kill / special words -> (label, score). NOT first-person, so they
-    # only upgrade an anchored kill; they never create a highlight on their own.
+    # Multi-kill / special words -> (label, score). NOT first-person; they only
+    # upgrade an anchored kill, and only when the banner portrait is YOURS.
     UPGRADE_TIERS = {
         "双杀": ("double_kill", 93),
         "终结": ("shutdown", 95),
@@ -45,7 +50,7 @@ class LolProfile(GameProfile):
         "五杀": ("penta_kill", 100),
     }
 
-    # Baseline tier for a plain anchored kill (no multi-kill word nearby).
+    # Baseline tier for a plain anchored kill (no own multi-kill word nearby).
     BASE_LABEL = "kill"
     BASE_SCORE = 90
 
@@ -55,9 +60,8 @@ class LolProfile(GameProfile):
     # A new kill EVENT starts only after this many seconds with no anchor hit.
     GAP_SECONDS = 5.0
 
-    # A multi-kill word counts toward an event if it occurs within this many
-    # seconds of the event's anchor time span. (1fps sampling can put the
-    # anchor and the "双杀"/"三杀" banners a few seconds apart.)
+    # A multi-kill word counts toward an event if within this many seconds of
+    # the event's anchor span (1fps can separate anchor and "双杀"/"三杀" banners).
     UPGRADE_WINDOW = 5.0
 
     # Clip length around each detected kill.
@@ -69,7 +73,7 @@ class LolProfile(GameProfile):
         fps: float,
     ) -> list[DetectedHighlight]:
         """
-        Detect your kills (anchored) with multi-kill upgrade.
+        Detect your anchored kills, upgraded by YOUR multi-kills (portrait-checked).
 
         Args:
             frame_paths: Ordered list of extracted frame image paths.
@@ -81,22 +85,30 @@ class LolProfile(GameProfile):
         if not frame_paths:
             return []
 
-        # 1. OCR each frame: record (sec, set of keywords found).
+        # 1. OCR each frame: anchor times, and multi-kill hits with frame path.
         anchor_times: list[float] = []
-        upgrade_hits: list[tuple[float, str]] = []  # (sec, upgrade_word)
+        upgrade_hits: list[tuple[float, str, str]] = []  # (sec, word, frame_path)
         for frame_index, frame_path in enumerate(frame_paths):
             sec = self.frame_index_to_sec(frame_index, fps)
             if contains_keyword(frame_path, self.ANCHOR_KEYWORD):
                 anchor_times.append(sec)
             for word in self.UPGRADE_TIERS:
                 if contains_keyword(frame_path, word):
-                    upgrade_hits.append((sec, word))
+                    upgrade_hits.append((sec, word, frame_path))
 
         # No anchored kills -> nothing is provably yours.
         if not anchor_times:
             return []
 
-        # 2. Group consecutive anchors into kill events.
+        # 2. Keep only multi-kill hits whose banner portrait matches YOUR HUD
+        #    champion (method C). This drops other players' broadcast multi-kills.
+        player_upgrade_hits: list[tuple[float, str]] = [
+            (sec, word)
+            for (sec, word, frame_path) in upgrade_hits
+            if is_player_multikill(frame_path)
+        ]
+
+        # 3. Group consecutive anchors into kill events.
         events: list[list[float]] = []
         current: list[float] = [anchor_times[0]]
         for t in anchor_times[1:]:
@@ -107,21 +119,18 @@ class LolProfile(GameProfile):
                 current.append(t)
         events.append(current)
 
-        # 3. For each event, find multi-kill words within UPGRADE_WINDOW of its
-        #    anchor span, and upgrade to the highest tier found.
+        # 4. Upgrade each event by YOUR multi-kill words within UPGRADE_WINDOW.
         highlights: list[DetectedHighlight] = []
         for event in events:
             first_anchor = event[0]
             last_anchor = event[-1]
             center_sec = (first_anchor + last_anchor) / 2
 
-            # Collect upgrade words near this event's anchor span.
             nearby_words: set[str] = set()
-            for sec, word in upgrade_hits:
+            for sec, word in player_upgrade_hits:
                 if (first_anchor - self.UPGRADE_WINDOW) <= sec <= (last_anchor + self.UPGRADE_WINDOW):
                     nearby_words.add(word)
 
-            # Pick the highest-scoring tier (or baseline if no upgrade nearby).
             if nearby_words:
                 best_word = max(nearby_words, key=lambda w: self.UPGRADE_TIERS[w][1])
                 label, score = self.UPGRADE_TIERS[best_word]
@@ -135,11 +144,11 @@ class LolProfile(GameProfile):
                     kind=label,
                     confidence=round(score / 100, 2),
                     meta={
-                        "source": "ocr",
+                        "source": "ocr+portrait",
                         "tier": label,
                         "score": score,
                         "anchor_hits": len(event),
-                        "upgrade_words": sorted(nearby_words),
+                        "own_upgrade_words": sorted(nearby_words),
                         "first_anchor_sec": round(first_anchor, 2),
                         "last_anchor_sec": round(last_anchor, 2),
                     },
