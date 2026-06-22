@@ -45,3 +45,11 @@ tmp/
 # Generated frames (regenerable from videos)
 backend/frames/
 tests/perf/frames_test/
+
+# YOLO training outputs and prediction runs
+runs/
+yolo/datasets/naraka/frames/
+*.cache
+yolo/venv/
+yolo*.pt
+backend/venv/

@@ -1,0 +1,5 @@
+path: C:/Users/adwar/projects/highlight-ai/yolo/datasets/naraka
+train: images/train
+val: images/train
+names:
+  0: kill
