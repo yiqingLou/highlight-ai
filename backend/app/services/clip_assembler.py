@@ -23,8 +23,11 @@ def cut_clip(
     """
     Cut a single segment [start_sec, end_sec] from a video using ffmpeg.
 
-    Uses accurate (re-encoding) seeking so the cut is frame-precise, at the
-    cost of being slower than stream-copy. Clips are short, so this is fine.
+    Uses fast input seeking (-ss before -i) so ffmpeg jumps straight to the
+    start time instead of decoding the whole file up to that point. This is
+    essential for large source files (multi-GB); decoding from frame 0 every
+    time would time out. Modern ffmpeg keeps this frame-accurate when
+    re-encoding.
 
     Args:
         video_path: Path to the source video.
@@ -49,16 +52,17 @@ def cut_clip(
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Accurate cut: place -ss/-t AFTER -i so ffmpeg decodes from the start
-    # and cuts on the exact frame (re-encoding).
+    # Fast seek: -ss BEFORE -i jumps directly to the start time without
+    # decoding everything before it. -t (duration) stays after -i so it counts
+    # from the sought position.
     cmd = [
         "ffmpeg",
+        "-ss", str(start_sec),   # fast input seek (before -i)
         "-i", str(src),
-        "-ss", str(start_sec),
         "-t", str(duration),
         "-c:v", "libx264",
         "-c:a", "aac",
-        "-preset", "fast",
+        "-preset", "veryfast",   # quicker encode for 2560x1600 clips
         "-loglevel", "error",
         "-y",                    # overwrite if exists
         str(out),

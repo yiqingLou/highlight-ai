@@ -38,6 +38,17 @@ router = APIRouter()
 # Plain single kills (90) are skipped to keep clips focused on the exciting moments.
 MIN_CLIP_SCORE = 93
 
+# Map a highlight kind -> score (0-100). Multi-kills outrank single kills, so
+# the MIN_CLIP_SCORE gate naturally keeps only the exciting streaks. Unknown
+# kinds fall back to the single-kill score.
+KIND_SCORE = {
+    "kill": 90,
+    "double_kill": 93,
+    "triple_kill": 96,
+    "quadra_kill": 98,
+    "penta_kill": 100,
+}
+
 
 # ============================================
 # Helper functions
@@ -81,7 +92,7 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
         0. Clear any existing frames for this task (idempotent re-runs)
         1. Extract frames from the video (ffmpeg)
         2. Load the game profile plugin for this task's game_type
-        3. Detect highlights from the frames (fake data at MVP stage)
+        3. Detect highlights from the frames
         4. Store detected highlights in the DB
         5. Mark task as done
 
@@ -145,17 +156,18 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
             start_sec = max(0.0, dh.center_sec - dh.duration_sec / 2)
             end_sec = dh.center_sec + dh.duration_sec / 2
 
-            # confidence (0.0-1.0) -> score (0-100)
-            score_100 = int(round(dh.confidence * 100))
+            # Map highlight kind -> score (0-100). Multi-kills outrank singles.
+            # Unknown kinds fall back to the single-kill score.
+            score_100 = KIND_SCORE.get(dh.kind, 90)
 
             highlight = Highlight(
                 task_id=task_id,
                 start_sec=round(start_sec, 2),
                 end_sec=round(end_sec, 2),
                 score=score_100,
-                score_visual=score_100,   # MVP: visual-based game, fill visual score
+                score_visual=score_100,   # visual-based game, fill visual score
                 label=dh.kind,
-                reason=str(dh.meta),      # e.g. "{'source': 'fake_mvp', 'frame_index': 25}"
+                reason=str(dh.meta),      # e.g. "{'source': 'yolo', 'kill_count': 2}"
                 sort_order=sort_idx,
             )
             db.add(highlight)
