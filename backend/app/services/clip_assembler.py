@@ -2,10 +2,10 @@
 Clip assembler service.
 
 Cuts highlight segments out of the source video using ffmpeg. Each highlight
-(start_sec -> end_sec) becomes its own short mp4 clip.
+(start_sec -> end_sec) becomes its own short mp4 clip. Clips can then be
+concatenated into a montage and have background music mixed over them.
 
-MVP scope: one clip per highlight, accurate re-encode cut. No concatenation,
-BGM, or subtitles yet (those come later).
+MVP scope: cut, concat, and BGM mixing. No transitions or subtitles yet.
 """
 
 import subprocess
@@ -86,3 +86,148 @@ def get_clip_file_size(output_path: str) -> int:
     """Return the size in bytes of a generated clip file (0 if missing)."""
     p = Path(output_path)
     return p.stat().st_size if p.exists() else 0
+
+
+def concat_clips(
+    clip_paths: list[str],
+    output_path: str,
+) -> None:
+    """
+    Concatenate multiple clips into a single video, in order.
+
+    All clips are assumed to share the same codec / resolution / parameters
+    (they are produced by the same cut_clip call), so the concat demuxer can
+    join them with stream copy (no re-encode) for a fast, lossless stitch.
+
+    Args:
+        clip_paths: Ordered list of clip file paths to join.
+        output_path: Where to write the concatenated video.
+
+    Raises:
+        ValueError: empty clip list.
+        FileNotFoundError: a clip path is missing.
+        VideoProbeError: ffmpeg failed.
+    """
+    if not clip_paths:
+        raise ValueError("concat_clips: clip_paths is empty")
+
+    for p in clip_paths:
+        if not Path(p).exists():
+            raise FileNotFoundError(f"Clip not found: {p}")
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # The concat demuxer reads a text file listing the inputs. Each line is:
+    #   file 'absolute/path/to/clip.mp4'
+    # Single quotes inside a path must be escaped as '\'' for ffmpeg.
+    list_file = out.parent / "_concat_list.txt"
+    with open(list_file, "w", encoding="utf-8") as f:
+        for p in clip_paths:
+            safe = str(Path(p).resolve()).replace("'", "'\\''")
+            f.write(f"file '{safe}'\n")
+
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-f", "concat",
+        "-safe", "0",           # allow absolute paths in the list file
+        "-i", str(list_file),
+        "-c", "copy",           # stream copy: no re-encode, fast and lossless
+        "-loglevel", "error",
+        "-y",
+        str(out),
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    finally:
+        # Clean up the temporary list file regardless of success.
+        if list_file.exists():
+            list_file.unlink()
+
+    if result.returncode != 0:
+        raise VideoProbeError(f"ffmpeg failed concatenating clips: {result.stderr}")
+
+
+def add_bgm(
+    video_path: str,
+    bgm_path: str,
+    output_path: str,
+    original_volume: float = 0.25,
+    bgm_volume: float = 1.0,
+) -> None:
+    """
+    Mix a background music track over a video's existing audio.
+
+    BGM is the main track; the original game audio is ducked to a low volume
+    so kill sound effects still come through under the music. If the BGM is
+    shorter than the video it loops; if longer it is cut to the video length.
+
+    Args:
+        video_path: Path to the (concatenated) video with its original audio.
+        bgm_path: Path to the BGM audio file.
+        output_path: Where to write the final mixed video.
+        original_volume: Multiplier for the original game audio (0.0-1.0).
+        bgm_volume: Multiplier for the BGM track.
+
+    Raises:
+        FileNotFoundError: video or bgm missing.
+        VideoProbeError: ffmpeg failed.
+    """
+    src = Path(video_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+    bgm = Path(bgm_path)
+    if not bgm.exists():
+        raise FileNotFoundError(f"BGM not found: {bgm_path}")
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # -stream_loop -1 loops the BGM so short tracks still cover the whole video.
+    # filter_complex:
+    #   [0:a] original audio, scaled down by original_volume
+    #   [1:a] looped BGM, scaled by bgm_volume
+    #   amix mixes both; duration=first ties output length to the video.
+    #   dropout_transition=0 keeps BGM at full level even if original is silent.
+    filter_complex = (
+        f"[0:a]volume={original_volume}[a0];"
+        f"[1:a]volume={bgm_volume}[a1];"
+        f"[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-i", str(src),
+        "-stream_loop", "-1",
+        "-i", str(bgm),
+        "-filter_complex", filter_complex,
+        "-map", "0:v",          # keep the original video stream
+        "-map", "[aout]",       # use the mixed audio
+        "-c:v", "copy",         # don't re-encode video
+        "-c:a", "aac",
+        "-shortest",            # stop at the shorter input (the video)
+        "-loglevel", "error",
+        "-y",
+        str(out),
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        raise VideoProbeError(f"ffmpeg timed out adding BGM to {video_path}")
+
+    if result.returncode != 0:
+        raise VideoProbeError(f"ffmpeg failed adding BGM: {result.stderr}")

@@ -53,3 +53,5 @@ yolo/datasets/naraka/frames/
 yolo/venv/
 yolo*.pt
 backend/venv/
+assets/bgm/) 
+assets/

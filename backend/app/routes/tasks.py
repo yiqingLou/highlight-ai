@@ -10,6 +10,7 @@ Endpoints:
   GET  /{id}/progress                 - Real-time extraction progress
   POST /{id}/generate-clips           - Cut high-score highlights into clips (background, 202)
   GET  /{id}/clips                    - List generated clips for a task
+  POST /{id}/montage                  - Stitch clips into one montage + optional BGM (background, 202)
 """
 
 import json
@@ -28,7 +29,12 @@ from app.services.video_processor import (
     extract_frames,
     VideoProbeError,
 )
-from app.services.clip_assembler import cut_clip, get_clip_file_size
+from app.services.clip_assembler import (
+    cut_clip,
+    get_clip_file_size,
+    concat_clips,
+    add_bgm,
+)
 from app.game_profiles.base import get_profile
 
 router = APIRouter()
@@ -264,6 +270,72 @@ def _run_clip_generation_in_background(task_id: int) -> None:
         db.close()
 
 
+def _run_montage_in_background(task_id: int, bgm_path: Optional[str]) -> None:
+    """
+    Background worker: stitch a task's clips into one montage and (optionally)
+    mix BGM over it.
+
+    Pipeline:
+        1. Collect this task's clip files in order
+        2. Concatenate them into one video (no re-encode)
+        3. If a BGM path is given, mix it over the montage (BGM main, game
+           audio ducked); otherwise keep the concatenated video as the result
+        4. Leave the final file at clips/{task_id}/montage_final.mp4
+
+    Errors are written to the task's error_message; the montage is best-effort.
+    """
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is None:
+            return
+
+        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        clips_dir = BACKEND_DIR / "clips" / str(task_id)
+
+        # --- Step 1: collect clip files in name order ---
+        clip_files = sorted(clips_dir.glob("clip_*.mp4"))
+        if not clip_files:
+            update_task_status(
+                db, task, status=task.status,
+                error_message="No clips to assemble. Run generate-clips first.",
+            )
+            return
+
+        clip_paths = [str(p) for p in clip_files]
+        raw_montage = clips_dir / "_montage_raw.mp4"
+        final_montage = clips_dir / "montage_final.mp4"
+
+        # --- Step 2: concatenate clips ---
+        try:
+            concat_clips(clip_paths, str(raw_montage))
+        except (ValueError, FileNotFoundError, VideoProbeError) as e:
+            update_task_status(
+                db, task, status=task.status,
+                error_message=f"Montage concat failed: {e}",
+            )
+            return
+
+        # --- Step 3: optional BGM mix ---
+        if bgm_path and Path(bgm_path).exists():
+            try:
+                add_bgm(str(raw_montage), bgm_path, str(final_montage))
+            except (FileNotFoundError, VideoProbeError) as e:
+                update_task_status(
+                    db, task, status=task.status,
+                    error_message=f"BGM mix failed: {e}",
+                )
+                return
+        else:
+            # No BGM: the concatenated video is the final montage.
+            if final_montage.exists():
+                final_montage.unlink()
+            raw_montage.replace(final_montage)
+
+    finally:
+        db.close()
+
+
 # ============================================
 # GET endpoints
 # ============================================
@@ -483,6 +555,51 @@ def generate_task_clips(
         "status": "generating_clips",
         "message": f"Cutting {eligible} clip(s) in background. Poll GET /{task_id}/clips.",
         "min_score": MIN_CLIP_SCORE,
+    }
+
+
+@router.post("/{task_id}/montage", status_code=202)
+def generate_task_montage(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    bgm: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Stitch this task's clips into a single montage, optionally with BGM mixed
+    over it. Returns 202 Accepted; runs in the background.
+
+    Query params:
+        bgm: Optional path to a BGM audio file. If omitted, the montage has
+             only the original (concatenated) game audio.
+
+    Requires clips to exist already (run generate-clips first).
+    Output: clips/{task_id}/montage_final.mp4
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    clips_dir = BACKEND_DIR / "clips" / str(task_id)
+    clip_count = len(list(clips_dir.glob("clip_*.mp4"))) if clips_dir.exists() else 0
+    if clip_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} has no clips. Run generate-clips first.",
+        )
+
+    # Strip stray whitespace from the path (e.g. an accidental leading space
+    # in the query param), so Path.exists() does not silently miss the file.
+    bgm_clean = bgm.strip() if bgm else None
+    background_tasks.add_task(_run_montage_in_background, task_id, bgm_clean)
+
+    return {
+        "task_id": task_id,
+        "status": "assembling_montage",
+        "message": f"Assembling {clip_count} clips into a montage in background.",
+        "bgm": bgm,
+        "output": f"clips/{task_id}/montage_final.mp4",
     }
 
 
