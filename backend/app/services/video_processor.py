@@ -180,3 +180,122 @@ def extract_frames(
     # 5. Collect generated file paths (sorted by frame number)
     frame_files = sorted(out_dir.glob("frame_*.jpg"))
     return [str(f) for f in frame_files]
+
+
+def extract_thumbnail(
+    video_path: str,
+    time_sec: float,
+    output_path: str,
+    label: str = "",
+    kill_count: int = 0,
+) -> None:
+    """
+    Grab a still frame and render a stylized highlight cover.
+
+    Pulls one frame at time_sec, then layers:
+      - a light contrast/saturation lift (game capture often looks flat)
+      - a vignette for a cinematic, focused look
+      - a bottom gradient scrim for a poster feel
+      - a gold accent bar on the left as a visual anchor
+      - a big kill-type caption ("DOUBLE KILL") with gold outline + shadow
+      - a smaller kill-count subtitle ("x2 KILLS")
+
+    Uses fast input seeking (-ss before -i) for large source files.
+
+    Args:
+        video_path: Path to the source video.
+        time_sec: Timestamp (seconds) of the frame to capture.
+        output_path: Where to write the output image (e.g. .jpg).
+        label: Highlight kind ("kill", "double_kill", ...). Drives the caption.
+        kill_count: Number of kills in the streak (drives the subtitle).
+
+    Raises:
+        FileNotFoundError: source video missing.
+        VideoProbeError: ffmpeg failed.
+    """
+    src = Path(video_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Video file not found: {video_path}")
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # Map the internal label to a display caption.
+    caption_map = {
+        "kill": "KILL",
+        "double_kill": "DOUBLE KILL",
+        "triple_kill": "TRIPLE KILL",
+        "quadra_kill": "QUADRA KILL",
+        "penta_kill": "PENTA KILL",
+    }
+    caption = caption_map.get(label, label.upper().replace("_", " "))
+
+    font = "C\\:/Windows/Fonts/impact.ttf"
+    gold = "0xFFD24A"  # accent gold for outline + bar
+
+    # Filter chain, applied in order.
+    filters = [
+        # 1. Subtle contrast + saturation lift (flat game capture -> punchier).
+        "eq=contrast=1.08:saturation=1.15",
+        # 2. Cinematic vignette (darkens the corners, focuses the center).
+        "vignette=PI/5",
+        # 3. Bottom scrim so captions stay readable over busy frames.
+        "drawbox=x=0:y=ih*0.76:w=iw:h=ih*0.24:color=black@0.5:t=fill",
+        # 4. Gold accent bar on the left, aligned with the caption.
+        f"drawbox=x=iw*0.035:y=ih*0.79:w=iw*0.008:h=ih*0.13:color={gold}@0.95:t=fill",
+    ]
+
+    if caption:
+        # 5. Main caption: big, white, gold outline + drop shadow.
+        filters.append(
+            "drawtext="
+            f"fontfile='{font}':"
+            f"text='{caption}':"
+            "fontcolor=white:"
+            "fontsize=h/10:"
+            f"borderw=5:bordercolor={gold}:"
+            "shadowcolor=black@0.7:shadowx=4:shadowy=4:"
+            "x=w*0.055:"
+            "y=h*0.77"
+        )
+
+    if kill_count and kill_count > 1:
+        # 6. Subtitle with the kill count, under the main caption.
+        filters.append(
+            "drawtext="
+            f"fontfile='{font}':"
+            f"text='x{kill_count} KILLS':"
+            "fontcolor=white@0.92:"
+            "fontsize=h/26:"
+            "borderw=3:bordercolor=black:"
+            "x=w*0.055:"
+            "y=h*0.90"
+        )
+
+    vf = ",".join(filters)
+
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-ss", str(max(0.0, time_sec)),
+        "-i", str(src),
+        "-frames:v", "1",
+        "-vf", vf,
+        "-q:v", "2",
+        "-loglevel", "error",
+        "-y",
+        str(out),
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise VideoProbeError(f"ffmpeg timed out grabbing thumbnail from {video_path}")
+
+    if result.returncode != 0:
+        raise VideoProbeError(f"ffmpeg failed grabbing thumbnail: {result.stderr}")

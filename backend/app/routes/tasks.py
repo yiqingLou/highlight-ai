@@ -13,6 +13,7 @@ Endpoints:
   POST /{id}/montage                  - Stitch clips into one montage + optional BGM (background, 202)
 """
 
+import ast
 import json
 import shutil
 from pathlib import Path
@@ -27,6 +28,7 @@ from app.schemas.task import TaskListResponse, TaskDetailResponse, TaskCreate
 from app.services.video_processor import (
     extract_video_metadata,
     extract_frames,
+    extract_thumbnail,
     VideoProbeError,
 )
 from app.services.clip_assembler import (
@@ -336,6 +338,92 @@ def _run_montage_in_background(task_id: int, bgm_path: Optional[str]) -> None:
         db.close()
 
 
+def _kill_time_for_highlight(hl) -> float:
+    """
+    Best timestamp (seconds) to grab a cover frame for a highlight.
+
+    Prefer the first kill time stored in the highlight's reason meta (that
+    frame is guaranteed to contain the kill scratch, since YOLO detected it
+    there). Fall back to the midpoint of the clip if meta is unavailable.
+    """
+    # reason is a Python dict repr like "{'source': 'yolo', 'first_kill_sec': 190.0, ...}"
+    # Offset added to the kill time. Frames are sampled at 1 fps, so the
+    # frame-index-to-seconds conversion can be up to ~1s early relative to
+    # the real video timestamp. Nudging forward lands more reliably inside
+    # the scratch icon's on-screen window.
+    SCRATCH_OFFSET_SEC = 0.5
+
+    if hl.reason:
+        try:
+            meta = ast.literal_eval(hl.reason)
+            if isinstance(meta, dict) and "first_kill_sec" in meta:
+                return float(meta["first_kill_sec"]) + SCRATCH_OFFSET_SEC
+        except (ValueError, SyntaxError):
+            pass
+    # Fallback: midpoint of the clip.
+    return (hl.start_sec + hl.end_sec) / 2
+
+def _run_thumbnail_generation_in_background(task_id: int) -> None:
+    """
+    Background worker: grab a cover frame for each highlight of a task.
+
+    For every highlight, capture a still at its first kill moment (the frame
+    that actually shows the kill scratch) and store it under
+    thumbnails/{task_id}/, then save the path on the highlight row.
+
+    Best-effort: a failure on one highlight is skipped, not fatal.
+    """
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is None:
+            return
+
+        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        thumbs_dir = BACKEND_DIR / "thumbnails" / str(task_id)
+        thumbs_dir.mkdir(parents=True, exist_ok=True)
+
+        highlights = (
+            db.query(Highlight)
+            .filter(Highlight.task_id == task_id)
+            .order_by(Highlight.sort_order)
+            .all()
+        )
+
+        for hl in highlights:
+            time_sec = _kill_time_for_highlight(hl)
+            output_path = thumbs_dir / f"hl_{hl.id:04d}.jpg"
+
+            # Pull kill_count from the reason meta for the subtitle.
+            kill_count = 0
+            if hl.reason:
+                try:
+                    meta = ast.literal_eval(hl.reason)
+                    if isinstance(meta, dict):
+                        kill_count = int(meta.get("kill_count", 0))
+                except (ValueError, SyntaxError):
+                    pass
+
+            try:
+                extract_thumbnail(
+                    video_path=task.file_path,
+                    time_sec=time_sec,
+                    output_path=str(output_path),
+                    label=hl.label,
+                    kill_count=kill_count,
+                )
+            except (FileNotFoundError, VideoProbeError):
+                # Skip this highlight on failure; keep going.
+                continue
+
+            hl.thumbnail_path = str(output_path)
+
+        db.commit()
+
+    finally:
+        db.close()
+
+
 # ============================================
 # GET endpoints
 # ============================================
@@ -600,6 +688,39 @@ def generate_task_montage(
         "message": f"Assembling {clip_count} clips into a montage in background.",
         "bgm": bgm,
         "output": f"clips/{task_id}/montage_final.mp4",
+    }
+
+
+@router.post("/{task_id}/thumbnails", status_code=202)
+def generate_task_thumbnails(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Grab a cover frame for each highlight (at its kill moment) in the
+    background. Returns 202 Accepted.
+
+    Requires highlights to exist already (run detection first).
+    Output: thumbnails/{task_id}/hl_{id}.jpg, path saved on each highlight.
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    count = db.query(Highlight).filter(Highlight.task_id == task_id).count()
+    if count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} has no highlights. Run detection first.",
+        )
+
+    background_tasks.add_task(_run_thumbnail_generation_in_background, task_id)
+
+    return {
+        "task_id": task_id,
+        "status": "generating_thumbnails",
+        "message": f"Grabbing cover frames for {count} highlight(s) in background.",
     }
 
 

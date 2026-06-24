@@ -55,3 +55,4 @@ yolo*.pt
 backend/venv/
 assets/bgm/) 
 assets/
+backend/thumbnails/
