@@ -274,15 +274,18 @@ def _run_clip_generation_in_background(task_id: int) -> None:
 
 def _run_montage_in_background(task_id: int, bgm_path: Optional[str]) -> None:
     """
-    Background worker: stitch a task's clips into one montage and (optionally)
-    mix BGM over it.
+    Background worker: stitch a task's clips into one montage, mix BGM, and
+    burn in timed kill captions.
 
     Pipeline:
         1. Collect this task's clip files in order
-        2. Concatenate them into one video (no re-encode)
-        3. If a BGM path is given, mix it over the montage (BGM main, game
-           audio ducked); otherwise keep the concatenated video as the result
-        4. Leave the final file at clips/{task_id}/montage_final.mp4
+        2. Concatenate them; concat_clips returns each clip's real duration
+        3. Build a caption timeline: for each clip, look up its highlight's
+           label and place a "DOUBLE KILL"-style caption at the clip's start
+           offset in the montage
+        4. Mix BGM and burn the captions in one pass; if no BGM, keep the
+           concatenated video as the result
+        5. Leave the final file at clips/{task_id}/montage_final.mp4
 
     Errors are written to the task's error_message; the montage is best-effort.
     """
@@ -308,9 +311,9 @@ def _run_montage_in_background(task_id: int, bgm_path: Optional[str]) -> None:
         raw_montage = clips_dir / "_montage_raw.mp4"
         final_montage = clips_dir / "montage_final.mp4"
 
-        # --- Step 2: concatenate clips ---
+        # --- Step 2: concatenate clips (returns each clip's real duration) ---
         try:
-            concat_clips(clip_paths, str(raw_montage))
+            durations = concat_clips(clip_paths, str(raw_montage))
         except (ValueError, FileNotFoundError, VideoProbeError) as e:
             update_task_status(
                 db, task, status=task.status,
@@ -318,18 +321,59 @@ def _run_montage_in_background(task_id: int, bgm_path: Optional[str]) -> None:
             )
             return
 
-        # --- Step 3: optional BGM mix ---
+        # --- Step 3: build the caption timeline ---
+        caption_map = {
+            "kill": "KILL",
+            "double_kill": "DOUBLE KILL",
+            "triple_kill": "TRIPLE KILL",
+            "quadra_kill": "QUADRA KILL",
+            "penta_kill": "PENTA KILL",
+        }
+        captions = []
+        cursor = 0.0
+        for clip_file, dur in zip(clip_files, durations):
+            clip_row = (
+                db.query(Clip)
+                .filter(Clip.output_path == str(clip_file))
+                .first()
+            )
+            label = None
+            if clip_row and clip_row.highlight_ids:
+                try:
+                    hl_ids = json.loads(clip_row.highlight_ids)
+                    if hl_ids:
+                        hl = db.query(Highlight).filter(
+                            Highlight.id == hl_ids[0]
+                        ).first()
+                        if hl:
+                            label = hl.label
+                except (ValueError, TypeError):
+                    pass
+
+            if label:
+                text = caption_map.get(label, label.upper().replace("_", " "))
+                captions.append({
+                    "start": round(cursor, 3),
+                    "text": text,
+                    "duration": 2.5,
+                })
+            cursor += dur
+
+        # --- Step 4: mix BGM + burn captions ---
         if bgm_path and Path(bgm_path).exists():
             try:
-                add_bgm(str(raw_montage), bgm_path, str(final_montage))
+                add_bgm(
+                    str(raw_montage), bgm_path, str(final_montage),
+                    captions=captions if captions else None,
+                )
             except (FileNotFoundError, VideoProbeError) as e:
                 update_task_status(
                     db, task, status=task.status,
-                    error_message=f"BGM mix failed: {e}",
+                    error_message=f"BGM/caption mix failed: {e}",
                 )
                 return
         else:
-            # No BGM: the concatenated video is the final montage.
+            # No BGM: keep the concatenated video as the final montage.
             if final_montage.exists():
                 final_montage.unlink()
             raw_montage.replace(final_montage)

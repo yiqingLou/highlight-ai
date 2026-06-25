@@ -91,7 +91,7 @@ def get_clip_file_size(output_path: str) -> int:
 def concat_clips(
     clip_paths: list[str],
     output_path: str,
-) -> None:
+) -> list[float]:
     """
     Concatenate multiple clips into a single video, in order.
 
@@ -154,6 +154,28 @@ def concat_clips(
     if result.returncode != 0:
         raise VideoProbeError(f"ffmpeg failed concatenating clips: {result.stderr}")
 
+    # Measure each clip's real duration with ffprobe so callers can build an
+    # accurate timeline (clip durations can drift slightly from the DB value
+    # due to re-encoding). Returned in the same order as clip_paths.
+    durations: list[float] = []
+    for p in clip_paths:
+        probe = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(p),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        try:
+            durations.append(float(probe.stdout.strip()))
+        except (ValueError, AttributeError):
+            durations.append(0.0)
+    return durations
+
 
 def add_bgm(
     video_path: str,
@@ -161,20 +183,25 @@ def add_bgm(
     output_path: str,
     original_volume: float = 0.25,
     bgm_volume: float = 1.0,
+    captions: list[dict] | None = None,
 ) -> None:
     """
-    Mix a background music track over a video's existing audio.
+    Mix BGM over a video and optionally burn in timed kill captions.
 
-    BGM is the main track; the original game audio is ducked to a low volume
-    so kill sound effects still come through under the music. If the BGM is
-    shorter than the video it loops; if longer it is cut to the video length.
+    BGM is the main track; original game audio is ducked. If captions are
+    given, each one is drawn (top-center, Impact, gold outline) only during
+    its time window, so each highlight in the montage gets its own pop-up
+    caption like "DOUBLE KILL".
 
     Args:
-        video_path: Path to the (concatenated) video with its original audio.
+        video_path: Path to the concatenated video with its original audio.
         bgm_path: Path to the BGM audio file.
         output_path: Where to write the final mixed video.
         original_volume: Multiplier for the original game audio (0.0-1.0).
         bgm_volume: Multiplier for the BGM track.
+        captions: Optional list of dicts, each:
+            {"start": float, "text": str, "duration": float}
+            text is shown from start to start+duration seconds.
 
     Raises:
         FileNotFoundError: video or bgm missing.
@@ -191,12 +218,12 @@ def add_bgm(
     out.parent.mkdir(parents=True, exist_ok=True)
 
     # -stream_loop -1 loops the BGM so short tracks still cover the whole video.
-    # filter_complex:
+    # audio_filter:
     #   [0:a] original audio, scaled down by original_volume
     #   [1:a] looped BGM, scaled by bgm_volume
     #   amix mixes both; duration=first ties output length to the video.
     #   dropout_transition=0 keeps BGM at full level even if original is silent.
-    filter_complex = (
+    audio_filter = (
         f"[0:a]volume={original_volume}[a0];"
         f"[1:a]volume={bgm_volume}[a1];"
         f"[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]"
@@ -208,12 +235,49 @@ def add_bgm(
         "-i", str(src),
         "-stream_loop", "-1",
         "-i", str(bgm),
-        "-filter_complex", filter_complex,
-        "-map", "0:v",          # keep the original video stream
-        "-map", "[aout]",       # use the mixed audio
-        "-c:v", "copy",         # don't re-encode video
+    ]
+
+    if captions:
+        # Build a video filter chain: one timed drawtext per caption.
+        font = "C\\:/Windows/Fonts/impact.ttf"
+        gold = "0xFFD24A"
+        draw_parts = []
+        for c in captions:
+            start = float(c["start"])
+            end = start + float(c.get("duration", 2.5))
+            text = str(c["text"])
+            draw_parts.append(
+                "drawtext="
+                f"fontfile='{font}':"
+                f"text='{text}':"
+                "fontcolor=white:"
+                "fontsize=h/11:"
+                f"borderw=5:bordercolor={gold}:"
+                "shadowcolor=black@0.7:shadowx=4:shadowy=4:"
+                "x=(w-text_w)/2:"
+                "y=h*0.08:"
+                f"enable='between(t,{start:.3f},{end:.3f})'"
+            )
+        video_filter = "[0:v]" + ",".join(draw_parts) + "[vout]"
+        full_filter = f"{audio_filter};{video_filter}"
+        cmd += [
+            "-filter_complex", full_filter,
+            "-map", "[vout]",
+            "-map", "[aout]",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+        ]
+    else:
+        cmd += [
+            "-filter_complex", audio_filter,
+            "-map", "0:v",
+            "-map", "[aout]",
+            "-c:v", "copy",
+        ]
+
+    cmd += [
         "-c:a", "aac",
-        "-shortest",            # stop at the shorter input (the video)
+        "-shortest",
         "-loglevel", "error",
         "-y",
         str(out),
