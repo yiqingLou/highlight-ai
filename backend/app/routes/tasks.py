@@ -37,14 +37,20 @@ from app.services.clip_assembler import (
     concat_clips,
     add_bgm,
 )
+from app.services.viral_score import compute_viral_score_from_meta
 from app.game_profiles.base import get_profile
 
 router = APIRouter()
 
-# Only highlights scoring at/above this are cut into clips (i.e. multi-kills:
-# double_kill=93, shutdown=95, triple_kill=96, quadra=98, penta=100).
-# Plain single kills (90) are skipped to keep clips focused on the exciting moments.
-MIN_CLIP_SCORE = 93
+# ViralScore threshold for entering the montage. Single kills score ~56,
+# double kills ~66-74, so 60 keeps strong multi-kills and lets a long single
+# squeak in, while filtering the weakest. Tune after seeing real distributions.
+MIN_CLIP_SCORE = 60
+
+# Montage keeps the top-N highlights by ViralScore. Multi-kills score highest
+# so they fill the slots first; strong single kills backfill when there are
+# fewer multi-kills than N. Keeps the reel tight instead of dumping everything.
+MONTAGE_TOP_N = 6
 
 # Map a highlight kind -> score (0-100). Multi-kills outrank single kills, so
 # the MIN_CLIP_SCORE gate naturally keeps only the exciting streaks. Unknown
@@ -164,9 +170,9 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
             start_sec = max(0.0, dh.center_sec - dh.duration_sec / 2)
             end_sec = dh.center_sec + dh.duration_sec / 2
 
-            # Map highlight kind -> score (0-100). Multi-kills outrank singles.
-            # Unknown kinds fall back to the single-kill score.
-            score_100 = KIND_SCORE.get(dh.kind, 90)
+            # ViralScore: fuse streak level + real kill span into a 0-100
+            # excitement score (replaces the flat kind lookup table).
+            score_100 = compute_viral_score_from_meta(dh.kind, dh.meta)
 
             highlight = Highlight(
                 task_id=task_id,
@@ -228,12 +234,14 @@ def _run_clip_generation_in_background(task_id: int) -> None:
         _clear_clips_dir(clips_dir)
         clips_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- Step 1: load high-score highlights, best first ---
+        # --- Step 1: load the top-N highlights by ViralScore, best first ---
+        # No score gate: ranking by ViralScore + a top-N cap naturally keeps
+        # the most exciting clips (multi-kills first, strong singles backfill).
         highlights = (
             db.query(Highlight)
             .filter(Highlight.task_id == task_id)
-            .filter(Highlight.score >= MIN_CLIP_SCORE)
             .order_by(Highlight.score.desc())
+            .limit(MONTAGE_TOP_N)
             .all()
         )
 
@@ -668,15 +676,14 @@ def generate_task_clips(
     eligible = (
         db.query(Highlight)
         .filter(Highlight.task_id == task_id)
-        .filter(Highlight.score >= MIN_CLIP_SCORE)
         .count()
     )
     if eligible == 0:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Task {task_id} has no highlights scoring >= {MIN_CLIP_SCORE}. "
-                f"Run detection first, or lower the threshold."
+                f"Task {task_id} has no highlights detected yet. "
+                f"Run detection first."
             ),
         )
 
@@ -685,8 +692,7 @@ def generate_task_clips(
     return {
         "task_id": task_id,
         "status": "generating_clips",
-        "message": f"Cutting {eligible} clip(s) in background. Poll GET /{task_id}/clips.",
-        "min_score": MIN_CLIP_SCORE,
+        "message": f"Cutting top {MONTAGE_TOP_N} highlights in background. Poll GET /{task_id}/clips.",
     }
 
 
