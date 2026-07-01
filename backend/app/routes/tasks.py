@@ -280,7 +280,11 @@ def _run_clip_generation_in_background(task_id: int) -> None:
         db.close()
 
 
-def _run_montage_in_background(task_id: int, bgm_path: Optional[str]) -> None:
+def _run_montage_in_background(
+    task_id: int,
+    bgm_path: Optional[str],
+    captions_enabled: bool = True,
+) -> None:
     """
     Background worker: stitch a task's clips into one montage, mix BGM, and
     burn in timed kill captions.
@@ -367,24 +371,22 @@ def _run_montage_in_background(task_id: int, bgm_path: Optional[str]) -> None:
                 })
             cursor += dur
 
-        # --- Step 4: mix BGM + burn captions ---
-        if bgm_path and Path(bgm_path).exists():
-            try:
-                add_bgm(
-                    str(raw_montage), bgm_path, str(final_montage),
-                    captions=captions if captions else None,
-                )
-            except (FileNotFoundError, VideoProbeError) as e:
-                update_task_status(
-                    db, task, status=task.status,
-                    error_message=f"BGM/caption mix failed: {e}",
-                )
-                return
-        else:
-            # No BGM: keep the concatenated video as the final montage.
-            if final_montage.exists():
-                final_montage.unlink()
-            raw_montage.replace(final_montage)
+        # --- Step 4: finalize — optionally mix BGM, optionally burn captions ---
+        # add_bgm handles all four combinations; bgm_path=None just skips BGM
+        # while still burning captions, so captions no longer depend on BGM.
+        clean_bgm = bgm_path if (bgm_path and Path(bgm_path).exists()) else None
+        try:
+            add_bgm(
+                str(raw_montage), str(final_montage),
+                bgm_path=clean_bgm,
+                captions=captions if (captions and captions_enabled) else None,
+            )
+        except (FileNotFoundError, VideoProbeError) as e:
+            update_task_status(
+                db, task, status=task.status,
+                error_message=f"Montage finalize failed: {e}",
+            )
+            return
 
     finally:
         db.close()
@@ -701,6 +703,7 @@ def generate_task_montage(
     task_id: int,
     background_tasks: BackgroundTasks,
     bgm: Optional[str] = None,
+    captions: bool = True,
     db: Session = Depends(get_db),
 ):
     """
@@ -730,7 +733,7 @@ def generate_task_montage(
     # Strip stray whitespace from the path (e.g. an accidental leading space
     # in the query param), so Path.exists() does not silently miss the file.
     bgm_clean = bgm.strip() if bgm else None
-    background_tasks.add_task(_run_montage_in_background, task_id, bgm_clean)
+    background_tasks.add_task(_run_montage_in_background, task_id, bgm_clean, captions)
 
     return {
         "task_id": task_id,

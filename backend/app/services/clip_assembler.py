@@ -179,66 +179,68 @@ def concat_clips(
 
 def add_bgm(
     video_path: str,
-    bgm_path: str,
     output_path: str,
+    bgm_path: str | None = None,
     original_volume: float = 0.25,
     bgm_volume: float = 1.0,
     captions: list[dict] | None = None,
 ) -> None:
     """
-    Mix BGM over a video and optionally burn in timed kill captions.
+    Finalize a montage: optionally mix BGM and optionally burn in kill captions.
 
-    BGM is the main track; original game audio is ducked. If captions are
-    given, each one is drawn (top-center, Impact, gold outline) only during
-    its time window, so each highlight in the montage gets its own pop-up
-    caption like "DOUBLE KILL".
+    Both BGM and captions are independent and optional, so all four
+    combinations work in a single ffmpeg pass (one re-encode at most):
+      - bgm + captions: ducked game audio under looped BGM, captions on top
+      - bgm only:       ducked game audio under looped BGM
+      - captions only:  original audio untouched, captions burned in
+      - neither:        a plain copy (no re-encode)
 
     Args:
-        video_path: Path to the concatenated video with its original audio.
-        bgm_path: Path to the BGM audio file.
-        output_path: Where to write the final mixed video.
-        original_volume: Multiplier for the original game audio (0.0-1.0).
+        video_path: The concatenated montage video (with original audio).
+        output_path: Where to write the final video.
+        bgm_path: Optional BGM audio file. If None, original audio is kept.
+        original_volume: Multiplier for original game audio when mixing BGM.
         bgm_volume: Multiplier for the BGM track.
-        captions: Optional list of dicts, each:
-            {"start": float, "text": str, "duration": float}
-            text is shown from start to start+duration seconds.
+        captions: Optional list of {"start": float, "text": str,
+                  "duration": float}; each is shown during its time window.
 
     Raises:
-        FileNotFoundError: video or bgm missing.
+        FileNotFoundError: video (or given bgm) missing.
         VideoProbeError: ffmpeg failed.
     """
     src = Path(video_path)
     if not src.exists():
         raise FileNotFoundError(f"Video not found: {video_path}")
-    bgm = Path(bgm_path)
-    if not bgm.exists():
-        raise FileNotFoundError(f"BGM not found: {bgm_path}")
+
+    use_bgm = bgm_path is not None and Path(bgm_path).exists()
+    use_captions = bool(captions)
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    # -stream_loop -1 loops the BGM so short tracks still cover the whole video.
-    # audio_filter:
-    #   [0:a] original audio, scaled down by original_volume
-    #   [1:a] looped BGM, scaled by bgm_volume
-    #   amix mixes both; duration=first ties output length to the video.
-    #   dropout_transition=0 keeps BGM at full level even if original is silent.
-    audio_filter = (
-        f"[0:a]volume={original_volume}[a0];"
-        f"[1:a]volume={bgm_volume}[a1];"
-        f"[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]"
-    )
+    # Fast path: nothing to do but copy.
+    if not use_bgm and not use_captions:
+        cmd = [
+            "ffmpeg", "-nostdin",
+            "-i", str(src),
+            "-c", "copy",
+            "-loglevel", "error",
+            "-y",
+            str(out),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            raise VideoProbeError(f"ffmpeg failed copying montage: {result.stderr}")
+        return
 
-    cmd = [
-        "ffmpeg",
-        "-nostdin",
-        "-i", str(src),
-        "-stream_loop", "-1",
-        "-i", str(bgm),
-    ]
+    cmd = ["ffmpeg", "-nostdin", "-i", str(src)]
+    if use_bgm:
+        cmd += ["-stream_loop", "-1", "-i", str(bgm_path)]
 
-    if captions:
-        # Build a video filter chain: one timed drawtext per caption.
+    filter_parts = []
+
+    # --- Video: burn captions if any ---
+    if use_captions:
         font = "C\\:/Windows/Fonts/impact.ttf"
         gold = "0xFFD24A"
         draw_parts = []
@@ -258,22 +260,28 @@ def add_bgm(
                 "y=h*0.08:"
                 f"enable='between(t,{start:.3f},{end:.3f})'"
             )
-        video_filter = "[0:v]" + ",".join(draw_parts) + "[vout]"
-        full_filter = f"{audio_filter};{video_filter}"
-        cmd += [
-            "-filter_complex", full_filter,
-            "-map", "[vout]",
-            "-map", "[aout]",
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-        ]
+        filter_parts.append("[0:v]" + ",".join(draw_parts) + "[vout]")
+
+    # --- Audio: mix BGM if any ---
+    if use_bgm:
+        filter_parts.append(
+            f"[0:a]volume={original_volume}[a0];"
+            f"[1:a]volume={bgm_volume}[a1];"
+            f"[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]"
+        )
+
+    cmd += ["-filter_complex", ";".join(filter_parts)]
+
+    # Map video: captioned stream if burned, else original.
+    cmd += ["-map", "[vout]" if use_captions else "0:v"]
+    # Map audio: mixed stream if BGM, else original.
+    cmd += ["-map", "[aout]" if use_bgm else "0:a"]
+
+    # Video codec: re-encode if we drew captions, else copy.
+    if use_captions:
+        cmd += ["-c:v", "libx264", "-preset", "veryfast"]
     else:
-        cmd += [
-            "-filter_complex", audio_filter,
-            "-map", "0:v",
-            "-map", "[aout]",
-            "-c:v", "copy",
-        ]
+        cmd += ["-c:v", "copy"]
 
     cmd += [
         "-c:a", "aac",
@@ -284,14 +292,9 @@ def add_bgm(
     ]
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     except subprocess.TimeoutExpired:
-        raise VideoProbeError(f"ffmpeg timed out adding BGM to {video_path}")
+        raise VideoProbeError(f"ffmpeg timed out finalizing montage: {video_path}")
 
     if result.returncode != 0:
-        raise VideoProbeError(f"ffmpeg failed adding BGM: {result.stderr}")
+        raise VideoProbeError(f"ffmpeg failed finalizing montage: {result.stderr}")
