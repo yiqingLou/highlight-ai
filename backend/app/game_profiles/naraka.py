@@ -20,10 +20,10 @@ from pathlib import Path
 from .base import GameProfile, DetectedHighlight
 
 # --- Detection tuning -----------------------------------------------------
-# Minimum confidence for a YOLO detection to count as a real kill. At 0.5 the
-# low-confidence UI/buff-icon false positives are filtered out (verified on
-# the scan set: false positives drop to zero at this threshold).
-CONF_THRESHOLD = 0.5
+# Minimum confidence for a YOLO detection to count as a real kill. At 0.55,
+# borderline false positives such as a held weapon misread at ~0.51 are
+# filtered while real kills remain comfortably above the threshold.
+CONF_THRESHOLD = 0.55
 
 # Frames sampled at fps; scratch detections closer than this many seconds are
 # the SAME kill (the icon persists across 2-3 neighbouring frames at 1 fps).
