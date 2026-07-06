@@ -368,6 +368,7 @@ def _run_montage_in_background(
                     "start": round(cursor, 3),
                     "text": text,
                     "duration": 2.5,
+                    "kind": label,
                 })
             cursor += dur
 

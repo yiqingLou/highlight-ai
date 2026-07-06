@@ -230,8 +230,16 @@ def extract_thumbnail(
     }
     caption = caption_map.get(label, label.upper().replace("_", " "))
 
-    font = "C\\:/Windows/Fonts/impact.ttf"
-    gold = "0xFFD24A"  # accent gold for outline + bar
+    font = "C\\:/Windows/Fonts/BebasNeue-Regular.ttf"
+    # Streak heat colors, matching the montage captions.
+    kind_color = {
+        "kill": "white",
+        "double_kill": "0xFFD24A",
+        "triple_kill": "0xFF8C3B",
+        "quadra_kill": "0xFF5252",
+        "penta_kill": "0xFF2D2D",
+    }
+    accent = kind_color.get(label, "white")
 
     # Filter chain, applied in order.
     filters = [
@@ -242,7 +250,7 @@ def extract_thumbnail(
         # 3. Bottom scrim so captions stay readable over busy frames.
         "drawbox=x=0:y=ih*0.76:w=iw:h=ih*0.24:color=black@0.5:t=fill",
         # 4. Gold accent bar on the left, aligned with the caption.
-        f"drawbox=x=iw*0.035:y=ih*0.79:w=iw*0.008:h=ih*0.13:color={gold}@0.95:t=fill",
+        f"drawbox=x=iw*0.035:y=ih*0.79:w=iw*0.008:h=ih*0.13:color={accent}@0.95:t=fill",
     ]
 
     if caption:
@@ -251,9 +259,9 @@ def extract_thumbnail(
             "drawtext="
             f"fontfile='{font}':"
             f"text='{caption}':"
-            "fontcolor=white:"
+            f"fontcolor={accent}:"
             "fontsize=h/10:"
-            f"borderw=5:bordercolor={gold}:"
+            "borderw=2:bordercolor=black@0.8:"
             "shadowcolor=black@0.7:shadowx=4:shadowy=4:"
             "x=w*0.055:"
             "y=h*0.77"

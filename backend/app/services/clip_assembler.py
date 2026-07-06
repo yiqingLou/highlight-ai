@@ -241,23 +241,47 @@ def add_bgm(
 
     # --- Video: burn captions if any ---
     if use_captions:
-        font = "C\\:/Windows/Fonts/impact.ttf"
-        gold = "0xFFD24A"
+        font = "C\\:/Windows/Fonts/BebasNeue-Regular.ttf"
+        # Streak heat colors: singles stay clean white, multi-kills warm up.
+        kind_color = {
+            "kill": "white",
+            "double_kill": "0xFFD24A",   # gold
+            "triple_kill": "0xFF8C3B",   # orange
+            "quadra_kill": "0xFF5252",   # red-orange
+            "penta_kill": "0xFF2D2D",    # red
+        }
         draw_parts = []
         for c in captions:
             start = float(c["start"])
             end = start + float(c.get("duration", 2.5))
             text = str(c["text"])
+            # Fade in over 0.3s after start, fade out over 0.3s before end.
+            fade = (
+                f"if(lt(t,{start:.3f}+0.3),(t-{start:.3f})/0.3,"
+                f"if(gt(t,{end:.3f}-0.3),({end:.3f}-t)/0.3,1))"
+            )
+            # Accent bar: a thin vertical white line left of the text,
+            # lower-left placement (doesn't cover the crosshair).
+            draw_parts.append(
+                "drawbox="
+                "x=iw*0.045:"
+                "y=ih*0.705:"
+                "w=iw*0.0025:"
+                "h=ih*0.06:"
+                f"color={kind_color.get(c.get('kind', 'kill'), 'white')}@0.9:t=fill:"
+                f"enable='between(t,{start:.3f},{end:.3f})'"
+            )
+            # Clean white text with a soft shadow, fading in/out.
             draw_parts.append(
                 "drawtext="
                 f"fontfile='{font}':"
                 f"text='{text}':"
-                "fontcolor=white:"
-                "fontsize=h/11:"
-                f"borderw=5:bordercolor={gold}:"
-                "shadowcolor=black@0.7:shadowx=4:shadowy=4:"
-                "x=(w-text_w)/2:"
-                "y=h*0.08:"
+                f"fontcolor={kind_color.get(c.get('kind', 'kill'), 'white')}:"
+                "fontsize=h/12:"
+                "shadowcolor=black@0.8:shadowx=3:shadowy=3:"
+                f"alpha='{fade}':"
+                "x=w*0.055:"
+                "y=h*0.71:"
                 f"enable='between(t,{start:.3f},{end:.3f})'"
             )
         filter_parts.append("[0:v]" + ",".join(draw_parts) + "[vout]")
