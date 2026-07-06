@@ -181,8 +181,8 @@ def add_bgm(
     video_path: str,
     output_path: str,
     bgm_path: str | None = None,
-    original_volume: float = 0.25,
-    bgm_volume: float = 1.0,
+    original_volume: float = 0.45,
+    bgm_volume: float = 0.8,
     captions: list[dict] | None = None,
 ) -> None:
     """
