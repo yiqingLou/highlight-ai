@@ -38,6 +38,10 @@ STREAK_GAP_SEC = 12.0
 # streak, so the clip has lead-in and follow-through.
 CLIP_PAD_SEC = 7.0
 
+# Single-kill timing: a 5s buildup before the kill, then 1.5s of linger.
+SINGLE_PRE_SEC = 5.0
+SINGLE_POST_SEC = 1.5
+
 # Minimum clip length for a single kill (seconds), centred on the kill.
 SINGLE_KILL_DURATION_SEC = 8.0
 
@@ -203,9 +207,11 @@ class NarakaProfile(GameProfile):
             best_conf = max(k["conf"] for k in streak)
 
             if n_kills == 1:
-                # Single kill: fixed-length clip centred on the kill.
-                center_sec = first_sec
-                duration_sec = SINGLE_KILL_DURATION_SEC
+                # Single kill: 5s buildup before the kill, then 1.5s after.
+                start_sec = max(0.0, first_sec - SINGLE_PRE_SEC)
+                end_sec = first_sec + SINGLE_POST_SEC
+                center_sec = (start_sec + end_sec) / 2
+                duration_sec = end_sec - start_sec
             else:
                 # Multi-kill: clip spans first..last kill plus padding.
                 start_sec = max(0.0, first_sec - CLIP_PAD_SEC)

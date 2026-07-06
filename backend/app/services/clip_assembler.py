@@ -88,6 +88,25 @@ def get_clip_file_size(output_path: str) -> int:
     return p.stat().st_size if p.exists() else 0
 
 
+def _probe_duration(path: str) -> float:
+    """Return the duration of a media file in seconds using ffprobe."""
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    try:
+        return float(probe.stdout.strip())
+    except (ValueError, AttributeError):
+        return 0.0
+
+
 def concat_clips(
     clip_paths: list[str],
     output_path: str,
@@ -154,26 +173,87 @@ def concat_clips(
     if result.returncode != 0:
         raise VideoProbeError(f"ffmpeg failed concatenating clips: {result.stderr}")
 
-    # Measure each clip's real duration with ffprobe so callers can build an
-    # accurate timeline (clip durations can drift slightly from the DB value
-    # due to re-encoding). Returned in the same order as clip_paths.
-    durations: list[float] = []
+    return [_probe_duration(p) for p in clip_paths]
+
+
+def concat_clips_with_transitions(
+    clip_paths: list[str],
+    output_path: str,
+    transition_duration: float = 0.5,
+) -> list[float]:
+    """Concatenate clips with crossfade transitions between them.
+
+    Uses xfade (video) and acrossfade (audio) filter chains, so the output is
+    re-encoded. Returns the real duration of each input clip (needed by the
+    caption timeline, same contract as concat_clips).
+    """
+    if not clip_paths:
+        raise ValueError("concat_clips_with_transitions: clip_paths is empty")
+
     for p in clip_paths:
-        probe = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                str(p),
-            ],
+        if not Path(p).exists():
+            raise FileNotFoundError(f"Clip not found: {p}")
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    durations = [_probe_duration(p) for p in clip_paths]
+
+    if len(clip_paths) == 1:
+        # Single clip: nothing to transition, just copy.
+        result = subprocess.run(
+            ["ffmpeg", "-nostdin", "-i", clip_paths[0],
+             "-c", "copy", "-loglevel", "error", "-y", str(out)],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=600,
         )
-        try:
-            durations.append(float(probe.stdout.strip()))
-        except (ValueError, AttributeError):
-            durations.append(0.0)
+        if result.returncode != 0:
+            raise VideoProbeError(
+                f"ffmpeg failed copying single clip for transitions: {result.stderr}"
+            )
+        return durations
+
+    inputs: list[str] = []
+    for p in clip_paths:
+        inputs += ["-i", p]
+
+    td = transition_duration
+    filter_parts: list[str] = []
+
+    # Video xfade chain: [0][1] -> [v01], [v01][2] -> [v02], ...
+    prev = "[0:v]"
+    offset = durations[0] - td
+    for i in range(1, len(clip_paths)):
+        out_filter = f"[v{i:02d}]"
+        filter_parts.append(
+            f"{prev}[{i}:v]xfade=transition=fade:"
+            f"duration={td}:offset={offset:.3f}{out_filter}"
+        )
+        prev = out_filter
+        offset += durations[i] - td
+    video_out = prev
+
+    # Audio acrossfade chain, mirroring the video chain.
+    prev_a = "[0:a]"
+    for i in range(1, len(clip_paths)):
+        out_a = f"[a{i:02d}]"
+        filter_parts.append(f"{prev_a}[{i}:a]acrossfade=d={td}{out_a}")
+        prev_a = out_a
+    audio_out = prev_a
+
+    cmd = (
+        ["ffmpeg", "-nostdin"] + inputs
+        + ["-filter_complex", ";".join(filter_parts),
+           "-map", video_out, "-map", audio_out,
+           "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+           "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-b:a", "192k",
+           "-loglevel", "error", "-y", str(out)]
+    )
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if result.returncode != 0:
+        raise VideoProbeError(f"ffmpeg failed concatenating clips with transitions: {result.stderr}")
     return durations
 
 

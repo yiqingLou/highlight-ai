@@ -35,6 +35,7 @@ from app.services.clip_assembler import (
     cut_clip,
     get_clip_file_size,
     concat_clips,
+    concat_clips_with_transitions,
     add_bgm,
 )
 from app.services.viral_score import compute_viral_score_from_meta
@@ -284,6 +285,7 @@ def _run_montage_in_background(
     task_id: int,
     bgm_path: Optional[str],
     captions_enabled: bool = True,
+    transitions: bool = True,
 ) -> None:
     """
     Background worker: stitch a task's clips into one montage, mix BGM, and
@@ -324,8 +326,15 @@ def _run_montage_in_background(
         final_montage = clips_dir / "montage_final.mp4"
 
         # --- Step 2: concatenate clips (returns each clip's real duration) ---
+        TRANSITION_SEC = 1.1
         try:
-            durations = concat_clips(clip_paths, str(raw_montage))
+            if transitions:
+                durations = concat_clips_with_transitions(
+                    clip_paths, str(raw_montage),
+                    transition_duration=TRANSITION_SEC,
+                )
+            else:
+                durations = concat_clips(clip_paths, str(raw_montage))
         except (ValueError, FileNotFoundError, VideoProbeError) as e:
             update_task_status(
                 db, task, status=task.status,
@@ -371,6 +380,8 @@ def _run_montage_in_background(
                     "kind": label,
                 })
             cursor += dur
+            if transitions:
+                cursor -= TRANSITION_SEC
 
         # --- Step 4: finalize — optionally mix BGM, optionally burn captions ---
         # add_bgm handles all four combinations; bgm_path=None just skips BGM
@@ -705,6 +716,7 @@ def generate_task_montage(
     background_tasks: BackgroundTasks,
     bgm: Optional[str] = None,
     captions: bool = True,
+    transitions: bool = True,
     db: Session = Depends(get_db),
 ):
     """
@@ -734,7 +746,9 @@ def generate_task_montage(
     # Strip stray whitespace from the path (e.g. an accidental leading space
     # in the query param), so Path.exists() does not silently miss the file.
     bgm_clean = bgm.strip() if bgm else None
-    background_tasks.add_task(_run_montage_in_background, task_id, bgm_clean, captions)
+    background_tasks.add_task(
+        _run_montage_in_background, task_id, bgm_clean, captions, transitions
+    )
 
     return {
         "task_id": task_id,
