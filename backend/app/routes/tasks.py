@@ -36,6 +36,7 @@ from app.services.clip_assembler import (
     get_clip_file_size,
     concat_clips,
     concat_clips_with_transitions,
+    make_title_card,
     add_bgm,
 )
 from app.services.viral_score import compute_viral_score_from_meta
@@ -286,6 +287,7 @@ def _run_montage_in_background(
     bgm_path: Optional[str],
     captions_enabled: bool = True,
     transitions: bool = True,
+    intro_outro: bool = True,
 ) -> None:
     """
     Background worker: stitch a task's clips into one montage, mix BGM, and
@@ -325,16 +327,47 @@ def _run_montage_in_background(
         raw_montage = clips_dir / "_montage_raw.mp4"
         final_montage = clips_dir / "montage_final.mp4"
 
+        # --- Optional: build intro + outro title cards ---
+        INTRO_SEC = 3.0
+        OUTRO_SEC = 3.0
+        intro_path = None
+        outro_path = None
+        if intro_outro:
+            # Intro background: a clean gameplay frame from the first kill.
+            first_kill_bg = None
+            try:
+                first_clip_row = (
+                    db.query(Clip)
+                    .filter(Clip.output_path == clip_paths[0])
+                    .first()
+                )
+                # Fall back to no background (solid black) if we can't find a frame.
+            except Exception:
+                pass
+            intro_path = str(clips_dir / "_intro.mp4")
+            make_title_card(
+                "NARAKA HIGHLIGHTS", intro_path,
+                bg_image=first_kill_bg, duration=INTRO_SEC,
+            )
+            outro_path = str(clips_dir / "_outro.mp4")
+            make_title_card(
+                "adwardallan", outro_path,
+                bg_image=None, duration=OUTRO_SEC,
+            )
+
         # --- Step 2: concatenate clips (returns each clip's real duration) ---
         TRANSITION_SEC = 1.1
+        assembly_paths = list(clip_paths)
+        if intro_outro:
+            assembly_paths = [intro_path] + assembly_paths + [outro_path]
         try:
             if transitions:
                 durations = concat_clips_with_transitions(
-                    clip_paths, str(raw_montage),
+                    assembly_paths, str(raw_montage),
                     transition_duration=TRANSITION_SEC,
                 )
             else:
-                durations = concat_clips(clip_paths, str(raw_montage))
+                durations = concat_clips(assembly_paths, str(raw_montage))
         except (ValueError, FileNotFoundError, VideoProbeError) as e:
             update_task_status(
                 db, task, status=task.status,
@@ -351,8 +384,11 @@ def _run_montage_in_background(
             "penta_kill": "PENTA KILL",
         }
         captions = []
-        cursor = 0.0
-        for clip_file, dur in zip(clip_files, durations):
+        # Cursor starts after the intro card (if any).
+        cursor = durations[0] if intro_outro else 0.0
+        # durations for the actual clips (skip intro/outro entries)
+        clip_durations = durations[1:-1] if intro_outro else durations
+        for clip_file, dur in zip(clip_files, clip_durations):
             clip_row = (
                 db.query(Clip)
                 .filter(Clip.output_path == str(clip_file))

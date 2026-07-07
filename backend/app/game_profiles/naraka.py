@@ -38,9 +38,9 @@ STREAK_GAP_SEC = 12.0
 # streak, so the clip has lead-in and follow-through.
 CLIP_PAD_SEC = 7.0
 
-# Single-kill timing: a 5s buildup before the kill, then 1.5s of linger.
-SINGLE_PRE_SEC = 5.0
-SINGLE_POST_SEC = 1.5
+# Single-kill timing: a long buildup before the kill, then a quick cut away.
+SINGLE_PRE_SEC = 8.5
+SINGLE_POST_SEC = 1.3
 
 # Minimum clip length for a single kill (seconds), centred on the kill.
 SINGLE_KILL_DURATION_SEC = 8.0

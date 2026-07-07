@@ -10,6 +10,7 @@ MVP scope: cut, concat, and BGM mixing. No transitions or subtitles yet.
 
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 from app.services.video_processor import VideoProbeError
 
@@ -255,6 +256,95 @@ def concat_clips_with_transitions(
     if result.returncode != 0:
         raise VideoProbeError(f"ffmpeg failed concatenating clips with transitions: {result.stderr}")
     return durations
+
+
+def make_title_card(
+    text: str,
+    output_path: str,
+    bg_image: Optional[str] = None,
+    duration: float = 3.0,
+    subtitle: Optional[str] = None,
+    width: int = 2560,
+    height: int = 1600,
+    fps: int = 60,
+) -> None:
+    """Render an intro/outro title card as a video segment.
+
+    A dimmed background (an image, slowly zoomed for a Ken Burns feel, or
+    solid black if no image) with Bebas Neue title text that slides up and
+    fades in, holds, then fades out. Output matches the montage clips'
+    format (resolution / fps / yuv420p) so it can be concatenated with them.
+    """
+    font = "C\\:/Windows/Fonts/BebasNeue-Regular.ttf"
+    total_frames = int(round(duration * fps))
+    fade = 0.4  # seconds for text fade in / out
+
+    # Text alpha: fade in over `fade`s, hold, fade out over the last `fade`s.
+    alpha = (
+        f"if(lt(t\\,{fade})\\,t/{fade}\\,"
+        f"if(gt(t\\,{duration}-{fade})\\,({duration}-t)/{fade}\\,1))"
+    )
+    # Slide up: text starts 40px lower, eases to center during fade-in.
+    y_main = f"(h-text_h)/2 + 40*(1-min(t/{fade}\\,1))"
+
+    filters = []
+    if bg_image:
+        # Ken Burns: slow zoom from 1.0 to ~1.08 across the whole card.
+        filters.append(
+            f"zoompan=z='min(zoom+0.0008\\,1.08)':"
+            f"d={total_frames}:s={width}x{height}:fps={fps}"
+        )
+        filters.append("eq=brightness=-0.35")  # dim the background
+    filters.append(
+        "drawtext="
+        f"fontfile='{font}':"
+        f"text='{text}':"
+        "fontcolor=white:"
+        "fontsize=h/8:"
+        "shadowcolor=black@0.6:shadowx=3:shadowy=3:"
+        f"alpha='{alpha}':"
+        "x=(w-text_w)/2:"
+        f"y={y_main}"
+    )
+    if subtitle:
+        filters.append(
+            "drawtext="
+            f"fontfile='{font}':"
+            f"text='{subtitle}':"
+            "fontcolor=white@0.85:"
+            "fontsize=h/22:"
+            f"alpha='{alpha}':"
+            "x=(w-text_w)/2:"
+            "y=(h-text_h)/2+h/9"
+        )
+    vf = ",".join(filters)
+
+    if bg_image:
+        cmd = [
+            "ffmpeg", "-nostdin",
+            "-loop", "1", "-t", str(duration), "-i", bg_image,
+            "-f", "lavfi", "-t", str(duration),
+            "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-vf", vf,
+            "-r", str(fps), "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k",
+            "-loglevel", "error", "-y", output_path,
+        ]
+    else:
+        # Solid black background source.
+        cmd = [
+            "ffmpeg", "-nostdin",
+            "-f", "lavfi", "-i",
+            f"color=c=black:s={width}x{height}:r={fps}:d={duration}",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-vf", vf, "-t", str(duration),
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-shortest", "-c:a", "aac", "-b:a", "192k",
+            "-loglevel", "error", "-y", output_path,
+        ]
+    subprocess.run(cmd, check=True, timeout=300)
 
 
 def add_bgm(
