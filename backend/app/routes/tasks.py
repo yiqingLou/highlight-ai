@@ -34,6 +34,8 @@ from app.services.video_processor import (
 from app.services.clip_assembler import (
     cut_clip,
     get_clip_file_size,
+    apply_kill_slowmo,
+    _probe_duration,
     concat_clips,
     concat_clips_with_transitions,
     make_title_card,
@@ -208,7 +210,7 @@ def _clear_clips_dir(clips_dir: Path) -> None:
         shutil.rmtree(clips_dir)
 
 
-def _run_clip_generation_in_background(task_id: int) -> None:
+def _run_clip_generation_in_background(task_id: int, slowmo: bool = True) -> None:
     """
     Background worker: cut high-score highlights into individual clip files.
 
@@ -266,11 +268,30 @@ def _run_clip_generation_in_background(task_id: int) -> None:
                 # Skip this highlight on failure; keep processing the rest.
                 continue
 
+            # --- Optional: speed-ramp slow-mo leading into the kill ---
+            # Singles only for now (multi-kill windows are more complex).
+            if slowmo and hl.label == "kill":
+                try:
+                    meta = ast.literal_eval(hl.reason) if hl.reason else {}
+                    first_kill = float(meta.get("first_kill_sec", 0.0))
+                    kill_in_clip = first_kill - hl.start_sec
+                    # Ramp needs ~1.8s of runway before the kill.
+                    if kill_in_clip > 1.8:
+                        tmp_path = clips_dir / f"_slowmo_{idx:03d}.mp4"
+                        apply_kill_slowmo(
+                            str(output_path), str(tmp_path),
+                            kill_sec=kill_in_clip,
+                        )
+                        tmp_path.replace(output_path)
+                except (ValueError, VideoProbeError, OSError):
+                    # Slow-mo is best-effort; keep the plain clip on failure.
+                    pass
+
             clip = Clip(
                 task_id=task_id,
                 output_path=str(output_path),
                 file_size=get_clip_file_size(str(output_path)),
-                duration_sec=round(hl.end_sec - hl.start_sec, 2),
+                duration_sec=round(_probe_duration(str(output_path)), 2),
                 resolution=resolution,
                 highlight_ids=json.dumps([hl.id]),  # one highlight per clip (MVP)
             )
@@ -711,6 +732,7 @@ def extract_task_frames(
 def generate_task_clips(
     task_id: int,
     background_tasks: BackgroundTasks,
+    slowmo: bool = True,
     db: Session = Depends(get_db),
 ):
     """
@@ -737,7 +759,7 @@ def generate_task_clips(
             ),
         )
 
-    background_tasks.add_task(_run_clip_generation_in_background, task_id)
+    background_tasks.add_task(_run_clip_generation_in_background, task_id, slowmo)
 
     return {
         "task_id": task_id,

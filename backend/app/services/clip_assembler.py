@@ -347,6 +347,102 @@ def make_title_card(
     subprocess.run(cmd, check=True, timeout=300)
 
 
+def apply_kill_slowmo(
+    clip_path: str,
+    output_path: str,
+    kill_sec: float,
+    fps: int = 60,
+    sfx_path: Optional[str] = None,
+) -> None:
+    """Apply a speed-ramp slow motion leading into the kill moment.
+
+    The window (kill_sec - 1.2) .. (kill_sec - 0.5) ramps down through
+    five speed steps (0.9 -> 0.4) with motion interpolation, then playback
+    returns to normal speed 0.5s BEFORE the kill so the kill itself hits
+    at full speed. Audio is tempo-stretched per segment to stay in sync
+    (slowed audio drops in pitch, which suits the effect).
+    """
+    ramp_end = kill_sec - 0.5     # normal speed resumes here
+    ramp_start = ramp_end - 1.2   # total ramp window: 1.2s of source
+
+    # (offset_from_start, duration, speed) — mirrors the approved test.
+    steps = [
+        (0.0, 0.2, 0.90),
+        (0.2, 0.2, 0.75),
+        (0.4, 0.2, 0.60),
+        (0.6, 0.3, 0.50),
+        (0.9, 0.3, 0.40),
+    ]
+
+    v_parts, v_labels = [], []
+
+    # Normal head.
+    v_parts.append(f"[0:v]trim=0:{ramp_start:.3f},setpts=PTS-STARTPTS[v0]")
+    v_labels.append("[v0]")
+
+    for i, (off, dur, speed) in enumerate(steps, start=1):
+        a1 = ramp_start + off
+        b1 = a1 + dur
+        v_parts.append(
+            f"[0:v]trim={a1:.3f}:{b1:.3f},setpts=(PTS-STARTPTS)/{speed},"
+            f"minterpolate=fps={fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir"
+            f"[v{i}]"
+        )
+        v_labels.append(f"[v{i}]")
+
+    # Normal tail (the kill plays at full speed).
+    n = len(steps) + 1
+    v_parts.append(f"[0:v]trim={ramp_end:.3f},setpts=PTS-STARTPTS[v{n}]")
+    v_labels.append(f"[v{n}]")
+
+    # --- Audio: 3 segments (normal head / slow-mo bed / normal tail) ---
+    slow_total = sum(d / s for _, d, s in steps)  # stretched duration
+
+    a_parts = []
+    a_parts.append(
+        f"[0:a]atrim=0:{ramp_start:.3f},asetpts=PTS-STARTPTS,"
+        f"afade=t=out:st={ramp_start-0.3:.3f}:d=0.3[ah]"
+    )
+    if sfx_path:
+        # Bass drop bed under the slow-mo (padded/trimmed to fit).
+        a_parts.append(
+            f"[1:a]atrim=0:{slow_total:.3f},asetpts=PTS-STARTPTS,"
+            f"volume=0.9,apad=whole_dur={slow_total:.3f}[as]"
+        )
+    else:
+        a_parts.append(
+            f"anullsrc=channel_layout=stereo:sample_rate=48000,"
+            f"atrim=0:{slow_total:.3f}[as]"
+        )
+    a_parts.append(
+        f"[0:a]atrim={ramp_end:.3f},asetpts=PTS-STARTPTS,"
+        f"afade=t=in:st=0:d=0.15[at]"
+    )
+
+    fc = (
+        ";".join(v_parts) + ";" + ";".join(a_parts) + ";"
+        + "".join(v_labels) + f"concat=n={n+1}:v=1:a=0[outv];"
+        + "[ah][as][at]concat=n=3:v=0:a=1[outa]"
+    )
+
+    inputs = ["-i", clip_path]
+    if sfx_path:
+        inputs += ["-i", sfx_path]
+    cmd = ["ffmpeg", "-nostdin"] + inputs + [
+        "-filter_complex", fc,
+        "-map", "[outv]", "-map", "[outa]",
+        "-r", str(fps), "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k",
+        "-loglevel", "error", "-y", output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    if result.returncode != 0:
+        raise VideoProbeError(
+            f"ffmpeg failed applying kill slow-mo: {result.stderr}"
+        )
+
+
 def add_bgm(
     video_path: str,
     output_path: str,
