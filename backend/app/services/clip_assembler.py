@@ -450,6 +450,7 @@ def add_bgm(
     original_volume: float = 0.45,
     bgm_volume: float = 0.8,
     captions: list[dict] | None = None,
+    bgm_offset_sec: float = 0.0,
 ) -> None:
     """
     Finalize a montage: optionally mix BGM and optionally burn in kill captions.
@@ -556,7 +557,8 @@ def add_bgm(
     if use_bgm:
         filter_parts.append(
             f"[0:a]volume={original_volume}[a0];"
-            f"[1:a]volume={bgm_volume}[a1];"
+            f"[1:a]atrim=start={bgm_offset_sec:.3f},asetpts=PTS-STARTPTS,"
+            f"volume={bgm_volume}[a1];"
             f"[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]"
         )
 

@@ -409,6 +409,53 @@ def _run_montage_in_background(
         cursor = durations[0] if intro_outro else 0.0
         # durations for the actual clips (skip intro/outro entries)
         clip_durations = durations[1:-1] if intro_outro else durations
+
+        clean_bgm = bgm_path if (bgm_path and Path(bgm_path).exists()) else None
+
+        # --- Beat sync: land a strong BGM beat on the first kill ---
+        bgm_offset = 0.0
+        if clean_bgm and clip_files:
+            try:
+                from app.services.beat_sync import (
+                    detect_hits,
+                    bgm_trim_for_kill,
+                )
+
+                first_clip_row = None
+                first_clip_hl = None
+                for clip_file, _ in zip(clip_files, clip_durations):
+                    clip_row = (
+                        db.query(Clip)
+                        .filter(Clip.output_path == str(clip_file))
+                        .first()
+                    )
+                    if clip_row and clip_row.highlight_ids:
+                        try:
+                            hl_ids = json.loads(clip_row.highlight_ids)
+                            if hl_ids:
+                                first_clip_hl = db.query(Highlight).filter(
+                                    Highlight.id == hl_ids[0]
+                                ).first()
+                                if first_clip_hl:
+                                    first_clip_row = clip_row
+                                    break
+                        except (ValueError, TypeError):
+                            pass
+
+                if first_clip_hl:
+                    meta = ast.literal_eval(first_clip_hl.reason)
+                    kill_orig = float(meta["first_kill_sec"]) - first_clip_hl.start_sec
+                    orig_dur = first_clip_hl.end_sec - first_clip_hl.start_sec
+                    delta = clip_durations[0] - orig_dur
+                    kill_in_clip = kill_orig + max(0.0, delta)
+                    t_kill = (durations[0] if intro_outro else 0.0) \
+                        - (TRANSITION_SEC if transitions else 0.0) + kill_in_clip
+                    BEAT_SYNC_CALIB = 0.4  # manual fine-tune: positive = hit lands earlier
+                    beats = detect_hits(clean_bgm)
+                    bgm_offset = bgm_trim_for_kill(t_kill, beats) + BEAT_SYNC_CALIB
+            except Exception:
+                bgm_offset = 0.0
+
         for clip_file, dur in zip(clip_files, clip_durations):
             clip_row = (
                 db.query(Clip)
@@ -443,12 +490,12 @@ def _run_montage_in_background(
         # --- Step 4: finalize — optionally mix BGM, optionally burn captions ---
         # add_bgm handles all four combinations; bgm_path=None just skips BGM
         # while still burning captions, so captions no longer depend on BGM.
-        clean_bgm = bgm_path if (bgm_path and Path(bgm_path).exists()) else None
         try:
             add_bgm(
                 str(raw_montage), str(final_montage),
                 bgm_path=clean_bgm,
                 captions=captions if (captions and captions_enabled) else None,
+                bgm_offset_sec=bgm_offset,
             )
         except (FileNotFoundError, VideoProbeError) as e:
             update_task_status(
