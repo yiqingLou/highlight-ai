@@ -181,6 +181,7 @@ def concat_clips_with_transitions(
     clip_paths: list[str],
     output_path: str,
     transition_duration: float = 0.5,
+    transition_types: list[str] | None = None,
 ) -> list[float]:
     """Concatenate clips with crossfade transitions between them.
 
@@ -227,12 +228,17 @@ def concat_clips_with_transitions(
     offset = durations[0] - td
     for i in range(1, len(clip_paths)):
         out_filter = f"[v{i:02d}]"
+        ttype = "fade"
+        if transition_types and i - 1 < len(transition_types):
+            ttype = transition_types[i - 1]
+        # Pro guideline: a flash must be 0.2-0.5s to read as a flash.
+        seg_td = 0.4 if ttype in ("fadewhite", "fadeblack") else td
         filter_parts.append(
-            f"{prev}[{i}:v]xfade=transition=fade:"
-            f"duration={td}:offset={offset:.3f}{out_filter}"
+            f"{prev}[{i}:v]xfade=transition={ttype}:"
+            f"duration={seg_td}:offset={offset:.3f}{out_filter}"
         )
         prev = out_filter
-        offset += durations[i] - td
+        offset += durations[i] - seg_td
     video_out = prev
 
     # Audio acrossfade chain, mirroring the video chain.

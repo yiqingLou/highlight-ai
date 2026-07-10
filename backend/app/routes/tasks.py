@@ -381,11 +381,45 @@ def _run_montage_in_background(
         assembly_paths = list(clip_paths)
         if intro_outro:
             assembly_paths = [intro_path] + assembly_paths + [outro_path]
+
+        # Transition plan: flash-white entering a multi-kill segment,
+        # plain crossfade everywhere else - the flash cues the hype.
+        MULTI_KILL_FLASH = "fadewhite"
+        seg_labels = []
+        if intro_outro:
+            seg_labels.append(None)  # intro card
+        for cf in clip_files:
+            row = db.query(Clip).filter(Clip.output_path == str(cf)).first()
+            lbl = None
+            if row and row.highlight_ids:
+                try:
+                    ids = json.loads(row.highlight_ids)
+                    h = db.query(Highlight).filter(Highlight.id == ids[0]).first()
+                    lbl = h.label if h else None
+                except (ValueError, TypeError):
+                    pass
+            seg_labels.append(lbl)
+        if intro_outro:
+            seg_labels.append(None)  # outro card
+        transition_types = []
+        for i in range(1, len(seg_labels)):
+            if seg_labels[i] in (
+                "double_kill", "triple_kill", "quadra_kill", "penta_kill"
+            ):
+                transition_types.append(MULTI_KILL_FLASH)
+            else:
+                transition_types.append("fade")
+
+        def _gap_dur(g: int) -> float:
+            t = transition_types[g] if g < len(transition_types) else "fade"
+            return 0.4 if t in ("fadewhite", "fadeblack") else TRANSITION_SEC
+
         try:
             if transitions:
                 durations = concat_clips_with_transitions(
                     assembly_paths, str(raw_montage),
                     transition_duration=TRANSITION_SEC,
+                    transition_types=transition_types,
                 )
             else:
                 durations = concat_clips(assembly_paths, str(raw_montage))
@@ -449,14 +483,14 @@ def _run_montage_in_background(
                     delta = clip_durations[0] - orig_dur
                     kill_in_clip = kill_orig + max(0.0, delta)
                     t_kill = (durations[0] if intro_outro else 0.0) \
-                        - (TRANSITION_SEC if transitions else 0.0) + kill_in_clip
+                        - (_gap_dur(0) if transitions else 0.0) + kill_in_clip
                     BEAT_SYNC_CALIB = 0.4  # manual fine-tune: positive = hit lands earlier
                     beats = detect_hits(clean_bgm)
                     bgm_offset = bgm_trim_for_kill(t_kill, beats) + BEAT_SYNC_CALIB
             except Exception:
                 bgm_offset = 0.0
 
-        for clip_file, dur in zip(clip_files, clip_durations):
+        for gi, (clip_file, dur) in enumerate(zip(clip_files, clip_durations)):
             clip_row = (
                 db.query(Clip)
                 .filter(Clip.output_path == str(clip_file))
@@ -485,7 +519,7 @@ def _run_montage_in_background(
                 })
             cursor += dur
             if transitions:
-                cursor -= TRANSITION_SEC
+                cursor -= _gap_dur(gi + 1 if intro_outro else gi)
 
         # --- Step 4: finalize — optionally mix BGM, optionally burn captions ---
         # add_bgm handles all four combinations; bgm_path=None just skips BGM
