@@ -856,6 +856,7 @@ def generate_task_montage(
     bgm: Optional[str] = None,
     captions: bool = True,
     transitions: bool = True,
+    intro_outro: bool = True,
     db: Session = Depends(get_db),
 ):
     """
@@ -886,7 +887,7 @@ def generate_task_montage(
     # in the query param), so Path.exists() does not silently miss the file.
     bgm_clean = bgm.strip() if bgm else None
     background_tasks.add_task(
-        _run_montage_in_background, task_id, bgm_clean, captions, transitions
+        _run_montage_in_background, task_id, bgm_clean, captions, transitions, intro_outro
     )
 
     return {
