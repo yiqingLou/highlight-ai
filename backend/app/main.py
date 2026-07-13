@@ -11,8 +11,11 @@ All endpoints organized into routers under app/routes/:
   /api/stats         (routes/stats.py)
 """
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # All endpoint routers
 from app.routes import highlights as highlights_routes
@@ -52,17 +55,9 @@ app.include_router(stats_routes.router, prefix="/api/stats", tags=["stats"])
 # Health check
 # ============================================
 
-@app.get("/")
-def read_root():
-    """Health check endpoint."""
-    return {
-        "name": "highlight-ai",
-        "status": "running",
-        "version": "0.4.0",
-    }
 
-
-@app.get("/api/hello")
-def hello():
-    """Test endpoint."""
-    return {"message": "Hello from FastAPI + SQLite!"}
+# ============================================
+# Frontend (static single-page app)
+# ============================================
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
