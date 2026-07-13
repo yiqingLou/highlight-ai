@@ -59,5 +59,8 @@ app.include_router(stats_routes.router, prefix="/api/stats", tags=["stats"])
 # ============================================
 # Frontend (static single-page app)
 # ============================================
+CLIPS_DIR = Path(__file__).resolve().parent.parent / "clips"
+app.mount("/clips", StaticFiles(directory=str(CLIPS_DIR)), name="clips")
+
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

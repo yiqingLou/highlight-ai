@@ -16,10 +16,11 @@ Endpoints:
 import ast
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
@@ -298,6 +299,7 @@ def _run_clip_generation_in_background(task_id: int, slowmo: bool = True) -> Non
             db.add(clip)
 
         db.commit()
+        update_task_status(db, task, status="done", progress=100)
 
     finally:
         db.close()
@@ -309,6 +311,7 @@ def _run_montage_in_background(
     captions_enabled: bool = True,
     transitions: bool = True,
     intro_outro: bool = True,
+    player_name: str = "",
 ) -> None:
     """
     Background worker: stitch a task's clips into one montage, mix BGM, and
@@ -372,7 +375,7 @@ def _run_montage_in_background(
             )
             outro_path = str(clips_dir / "_outro.mp4")
             make_title_card(
-                "adwardallan", outro_path,
+                player_name.strip() or "HIGHLIGHT AI", outro_path,
                 bg_image=None, duration=OUTRO_SEC,
             )
 
@@ -537,6 +540,8 @@ def _run_montage_in_background(
                 error_message=f"Montage finalize failed: {e}",
             )
             return
+
+        update_task_status(db, task, status="done", progress=100)
 
     finally:
         db.close()
@@ -722,6 +727,66 @@ def get_task_by_id(task_id: int, db: Session = Depends(get_db)):
 # POST endpoints
 # ============================================
 
+@router.post("/upload", status_code=201)
+async def upload_task_video(file: UploadFile, db: Session = Depends(get_db)):
+    """Accept a video upload, store it under backend/uploads/, create a task.
+
+    The file is streamed to disk in chunks so multi-GB uploads never sit in
+    memory. If a task already exists for the stored path, that task is
+    returned instead of a duplicate.
+    """
+    if not file.filename or not file.filename.lower().endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="Only .mp4 files are supported")
+
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    uploads_dir = BACKEND_DIR / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # Avoid collisions: prefix with a timestamp if the name is taken.
+    dest = uploads_dir / file.filename
+    if dest.exists():
+        stem, suffix = dest.stem, dest.suffix
+        dest = uploads_dir / f"{stem}_{int(time.time())}{suffix}"
+
+    CHUNK = 8 * 1024 * 1024  # 8 MB
+    try:
+        with open(dest, "wb") as out:
+            while True:
+                chunk = await file.read(CHUNK)
+                if not chunk:
+                    break
+                out.write(chunk)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store upload: {e}")
+
+    file_path = str(dest).replace("\\", "/")
+    existing = db.query(Task).filter(Task.file_path == file_path).first()
+    if existing:
+        return existing
+
+    try:
+        metadata = extract_video_metadata(file_path)
+    except (FileNotFoundError, VideoProbeError) as e:
+        # Stored but not a readable video — remove it and reject.
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Cannot read video: {e}")
+
+    task = Task(
+        file_path=file_path,
+        file_name=dest.name,
+        file_size=metadata["file_size"],
+        duration_sec=metadata["duration_sec"],
+        width=metadata["width"],
+        height=metadata["height"],
+        fps=metadata["fps"],
+        game_type="naraka",
+        status="pending",
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
 @router.post("/", response_model=TaskDetailResponse, status_code=201)
 def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     """Create a new task with automatic video metadata extraction."""
@@ -840,6 +905,7 @@ def generate_task_clips(
             ),
         )
 
+    update_task_status(db, task, status="processing", progress=0)
     background_tasks.add_task(_run_clip_generation_in_background, task_id, slowmo)
 
     return {
@@ -857,6 +923,7 @@ def generate_task_montage(
     captions: bool = True,
     transitions: bool = True,
     intro_outro: bool = True,
+    player_name: str = "",
     db: Session = Depends(get_db),
 ):
     """
@@ -886,8 +953,9 @@ def generate_task_montage(
     # Strip stray whitespace from the path (e.g. an accidental leading space
     # in the query param), so Path.exists() does not silently miss the file.
     bgm_clean = bgm.strip() if bgm else None
+    update_task_status(db, task, status="processing", progress=0)
     background_tasks.add_task(
-        _run_montage_in_background, task_id, bgm_clean, captions, transitions, intro_outro
+        _run_montage_in_background, task_id, bgm_clean, captions, transitions, intro_outro, player_name
     )
 
     return {
