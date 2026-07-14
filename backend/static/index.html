@@ -218,7 +218,10 @@
     }
     .clip-thumb:hover { border-color: rgba(255, 210, 74, 0.4); transform: translateY(-2px); }
     .clip-thumb video { aspect-ratio: 16/10; object-fit: cover; border-radius: 0; }
-    .clip-thumb .cname { padding: 7px 10px; font-size: 0.74em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .clip-thumb .crow { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; gap: 6px; }
+    .clip-thumb .cname { flex: 1; font-size: 0.74em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .clip-thumb .cdl { color: var(--faint); text-decoration: none; font-size: 1.05em; }
+    .clip-thumb .cdl:hover { color: var(--gold); }
 
     /* ---- Library ---- */
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
@@ -256,6 +259,9 @@
     }
     .tcard:hover .del { opacity: 1; }
     .del:hover { color: #ff6b6b; }
+    .lib-bar { display: flex; gap: 12px; margin-bottom: 18px; }
+    .lib-bar input[type="text"] { flex: 1; }
+    .lib-bar select { width: 170px; margin-top: 0; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -355,6 +361,20 @@
     <!-- ======== Library ======== -->
     <section class="view" id="view-library">
       <h2 class="page-title">Library</h2>
+      <div class="lib-bar">
+        <input type="text" id="libSearch" placeholder="Search by name or #id" spellcheck="false" />
+        <select id="libStatus">
+          <option value="">All statuses</option>
+          <option value="done">done</option>
+          <option value="processing">processing</option>
+          <option value="pending">pending</option>
+          <option value="failed">failed</option>
+        </select>
+        <select id="libSort">
+          <option value="new">Newest first</option>
+          <option value="old">Oldest first</option>
+        </select>
+      </div>
       <div class="grid" id="historyList"></div>
     </section>
   </div>
@@ -432,7 +452,9 @@
           div.className = "clip-thumb";
           div.innerHTML =
             `<video src="/clips/${id}/${fname}#t=1" muted preload="metadata"></video>` +
-            `<div class="cname">${fname}</div>`;
+            `<div class="crow"><div class="cname">${fname}</div>` +
+            `<a class="cdl" href="/clips/${id}/${fname}" download title="Download clip">&#10515;</a></div>`;
+          div.querySelector(".cdl").addEventListener("click", (e) => e.stopPropagation());
           div.addEventListener("click", () => {
             $("player-video").src = `/clips/${id}/${fname}`;
             $("result").style.display = "block";
@@ -612,52 +634,74 @@
     }
 
     // ---- Library ----
+    let libTasks = [];
+
     async function loadHistory() {
       try {
-        const res = await fetch("/api/tasks/?limit=20");
+        const res = await fetch("/api/tasks/?limit=50");
         if (!res.ok) return;
         const body = await res.json();
-        const tasks = Array.isArray(body) ? body : (body.tasks || body.items || []);
-        const list = $("historyList");
-        list.innerHTML = "";
-        if (!tasks.length) {
-          list.innerHTML = '<div class="hint">No tasks yet.</div>';
-          return;
-        }
-        for (const t of tasks) {
-          const card = document.createElement("div");
-          card.className = "tcard";
-          card.innerHTML =
-            `<span class="del" title="Delete">&times;</span>` +
-            `<div class="thumb" id="thumb-${t.id}">&#9654;</div>` +
-            `<div class="tmeta">` +
-              `<div class="tname">${t.file_name || t.file_path || ""}</div>` +
-              `<div class="trow"><span class="tid">#${t.id}</span>` +
-              `<span class="badge ${t.status}">${t.status}</span></div>` +
-            `</div>`;
-          card.querySelector(".del").addEventListener("click", async (e) => {
-            e.stopPropagation();
-            if (!confirm(`Delete task #${t.id} and all its files?`)) return;
-            await fetch(`/api/tasks/${t.id}`, { method: "DELETE" });
-            loadHistory();
-          });
-          card.addEventListener("click", () => adoptTask(t.id));
-          list.appendChild(card);
-
-          const url = `/clips/${t.id}/montage_final.mp4`;
-          fetch(url, { method: "HEAD" }).then((h) => {
-            if (h.ok) {
-              const v = document.createElement("video");
-              v.src = `${url}#t=4`;
-              v.muted = true; v.preload = "metadata";
-              const holder = $(`thumb-${t.id}`);
-              holder.textContent = "";
-              holder.appendChild(v);
-            }
-          }).catch(() => {});
-        }
+        libTasks = Array.isArray(body) ? body : (body.tasks || body.items || []);
+        renderHistory();
       } catch { /* best-effort */ }
     }
+
+    function renderHistory() {
+      const q = $("libSearch").value.trim().toLowerCase();
+      const st = $("libStatus").value;
+      const sort = $("libSort").value;
+
+      let tasks = libTasks.filter((t) => {
+        if (st && t.status !== st) return false;
+        if (q) {
+          const name = (t.file_name || t.file_path || "").toLowerCase();
+          if (!name.includes(q) && String(t.id) !== q.replace("#", "")) return false;
+        }
+        return true;
+      });
+      tasks.sort((a, b) => (sort === "old" ? a.id - b.id : b.id - a.id));
+
+      const list = $("historyList");
+      list.innerHTML = "";
+      if (!tasks.length) {
+        list.innerHTML = '<div class="hint">No matching tasks.</div>';
+        return;
+      }
+      for (const t of tasks) {
+        const card = document.createElement("div");
+        card.className = "tcard";
+        card.innerHTML =
+          `<span class="del" title="Delete">&times;</span>` +
+          `<div class="thumb" id="thumb-${t.id}">&#9654;</div>` +
+          `<div class="tmeta">` +
+            `<div class="tname">${t.file_name || t.file_path || ""}</div>` +
+            `<div class="trow"><span class="tid">#${t.id}</span>` +
+            `<span class="badge ${t.status}">${t.status}</span></div>` +
+          `</div>`;
+        card.querySelector(".del").addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Delete task #${t.id} and all its files?`)) return;
+          await fetch(`/api/tasks/${t.id}`, { method: "DELETE" });
+          loadHistory();
+        });
+        card.addEventListener("click", () => adoptTask(t.id));
+        list.appendChild(card);
+
+        const url = `/clips/${t.id}/montage_final.mp4`;
+        fetch(url, { method: "HEAD" }).then((h) => {
+          if (h.ok) {
+            const v = document.createElement("video");
+            v.src = `${url}#t=4`;
+            v.muted = true; v.preload = "metadata";
+            const holder = $(`thumb-${t.id}`);
+            if (holder) { holder.textContent = ""; holder.appendChild(v); }
+          }
+        }).catch(() => {});
+      }
+    }
+
+    ["libSearch", "libStatus", "libSort"].forEach((id) =>
+      $(id).addEventListener("input", renderHistory));
 
     async function adoptTask(id) {
       resetPipelineUI();
