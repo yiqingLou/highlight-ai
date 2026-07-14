@@ -4,135 +4,272 @@
   <meta charset="UTF-8" />
   <title>Highlight AI</title>
   <style>
+    :root {
+      --bg: #0b0b10;
+      --card: rgba(26, 26, 36, 0.55);
+      --line: rgba(255, 255, 255, 0.07);
+      --gold: #ffd24a;
+      --orange: #ff8c3b;
+      --text-dim: #9a9aa8;
+      --grad: linear-gradient(135deg, var(--gold), var(--orange));
+    }
+    * { box-sizing: border-box; }
     body {
-      margin: 0; min-height: 100vh; display: flex; flex-direction: column;
-      align-items: center; justify-content: center; padding: 40px 0;
-      background: #101014; color: #eee;
-      font-family: "Segoe UI", system-ui, sans-serif;
+      margin: 0; min-height: 100vh;
+      background:
+        radial-gradient(900px 420px at 50% -140px, rgba(255, 140, 59, 0.13), transparent 65%),
+        radial-gradient(700px 380px at 85% 12%, rgba(255, 210, 74, 0.05), transparent 60%),
+        var(--bg);
+      color: #ececf1;
+      font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
     }
-    h1 { letter-spacing: 0.15em; font-weight: 600; }
-    h1 span { color: #ffd24a; }
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 36px;
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(11, 11, 16, 0.72);
+      backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--line);
+    }
+    .logo { letter-spacing: 0.18em; font-weight: 700; font-size: 1.02em; }
+    .logo span {
+      background: var(--grad);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .tabs { display: flex; gap: 4px; background: rgba(255,255,255,0.04); padding: 4px; border-radius: 999px; }
+    .tab {
+      padding: 8px 20px; border-radius: 999px; cursor: pointer;
+      color: var(--text-dim); font-size: 0.88em; transition: color 0.2s, background 0.25s;
+      user-select: none;
+    }
+    .tab:hover { color: #fff; }
+    .tab.active { color: #16161d; font-weight: 700; background: var(--grad); }
+
+    main { display: flex; flex-direction: column; align-items: center; padding: 48px 20px 80px; }
+    .view { display: none; width: 100%; max-width: 560px; }
+    .view.active { display: block; animation: rise 0.35s ease; }
+    #view-library.active { max-width: 980px; }
+    @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
     .card {
-      background: #1a1a22; border: 1px solid #2a2a35; border-radius: 12px;
-      padding: 32px 40px; width: 480px; margin-bottom: 20px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 34px 40px; margin-bottom: 22px;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
     }
-    label { display: block; color: #aaa; font-size: 0.85em; margin-bottom: 6px; }
+    h2 { margin: 0 0 20px; font-size: 1.05em; font-weight: 600; letter-spacing: 0.04em; }
+    label { display: block; color: var(--text-dim); font-size: 0.84em; margin-bottom: 7px; }
     input[type="text"] {
-      width: 100%; box-sizing: border-box; padding: 12px 14px;
-      background: #12121a; color: #eee; border: 1px solid #3a3a48;
-      border-radius: 8px; font-size: 0.95em; outline: none;
-      transition: border-color 0.2s;
+      width: 100%; padding: 13px 15px;
+      background: rgba(10, 10, 16, 0.7); color: #ececf1;
+      border: 1px solid var(--line); border-radius: 10px;
+      font-size: 0.95em; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
     }
-    input[type="text"]:focus { border-color: #ffd24a; }
-    .hint { color: #666; font-size: 0.8em; margin-top: 8px; }
+    input[type="text"]:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(255, 210, 74, 0.12); }
+    .hint { color: #62626e; font-size: 0.8em; margin-top: 9px; }
     button {
-      margin-top: 18px; width: 100%; padding: 12px;
-      background: linear-gradient(135deg, #ffd24a, #ff8c3b);
-      color: #1a1a22; font-weight: 700; font-size: 1em;
-      border: none; border-radius: 8px; cursor: pointer;
-      transition: transform 0.1s, filter 0.2s;
+      margin-top: 20px; width: 100%; padding: 13px;
+      background: var(--grad); color: #16161d;
+      font-weight: 700; font-size: 1em;
+      border: none; border-radius: 10px; cursor: pointer;
+      box-shadow: 0 6px 24px rgba(255, 140, 59, 0.28);
+      transition: transform 0.12s, box-shadow 0.25s, filter 0.2s;
     }
-    button:hover { filter: brightness(1.1); }
-    button:active { transform: scale(0.98); }
-    button:disabled { filter: grayscale(1); cursor: not-allowed; }
+    button:hover { filter: brightness(1.08); box-shadow: 0 8px 32px rgba(255, 140, 59, 0.4); }
+    button:active { transform: scale(0.985); }
+    button:disabled { filter: grayscale(1); box-shadow: none; cursor: not-allowed; }
     #status { margin-top: 16px; min-height: 22px; font-size: 0.9em; }
     .ok { color: #7dd87d; } .err { color: #ff6b6b; }
 
-    /* Drop zone */
     .drop {
-      border: 2px dashed #3a3a48; border-radius: 10px; padding: 30px 16px;
+      border: 1.5px dashed rgba(255, 255, 255, 0.14);
+      border-radius: 13px; padding: 42px 16px;
       cursor: pointer; text-align: center;
-      transition: border-color 0.2s, background 0.2s;
+      transition: border-color 0.25s, background 0.25s, box-shadow 0.25s;
     }
-    .drop:hover, .drop.over { border-color: #ffd24a; background: #20202a; }
+    .drop .big { font-size: 1.02em; }
+    .drop:hover, .drop.over {
+      border-color: var(--gold);
+      background: rgba(255, 210, 74, 0.045);
+      box-shadow: inset 0 0 40px rgba(255, 140, 59, 0.06);
+    }
     #file { display: none; }
     .divider {
-      display: flex; align-items: center; gap: 12px;
-      color: #555; font-size: 0.8em; margin: 18px 0;
+      display: flex; align-items: center; gap: 14px;
+      color: #55555f; font-size: 0.78em; margin: 22px 0;
+      letter-spacing: 0.05em;
     }
-    .divider::before, .divider::after {
-      content: ""; flex: 1; height: 1px; background: #2a2a35;
+    .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+    .upbar, .bar {
+      height: 6px; background: rgba(255, 255, 255, 0.06);
+      border-radius: 3px; overflow: hidden;
     }
-    .upbar { height: 6px; background: #2a2a35; border-radius: 3px; overflow: hidden; margin-top: 14px; display: none; }
-    .upbar > div {
+    .upbar { margin-top: 16px; display: none; }
+    .upbar > div, .bar > div {
       height: 100%; width: 0%;
-      background: linear-gradient(90deg, #ffd24a, #ff8c3b);
-      transition: width 0.2s;
+      background: var(--grad);
+      box-shadow: 0 0 12px rgba(255, 140, 59, 0.5);
+      transition: width 0.3s;
     }
 
-    /* Pipeline */
-    #pipeline { display: none; }
-    .stages { display: flex; justify-content: space-between; margin: 18px 0 6px; }
-    .stage { flex: 1; text-align: center; color: #555; font-size: 0.8em; transition: color 0.3s; }
+    .stages {
+      display: flex; justify-content: space-between; position: relative;
+      margin: 24px 0 10px;
+    }
+    .stages::before {
+      content: ""; position: absolute; top: 8px; left: 16%; right: 16%;
+      height: 2px; background: var(--line);
+    }
+    .stage { flex: 1; text-align: center; color: #55555f; font-size: 0.8em; position: relative; transition: color 0.3s; }
     .stage .dot {
-      width: 14px; height: 14px; border-radius: 50%; margin: 0 auto 6px;
-      background: #2a2a35; transition: background 0.3s, box-shadow 0.3s;
+      width: 16px; height: 16px; border-radius: 50%; margin: 0 auto 8px;
+      background: #22222c; border: 2px solid #33333f;
+      transition: all 0.3s; position: relative; z-index: 1;
     }
-    .stage.active { color: #ffd24a; }
-    .stage.active .dot { background: #ffd24a; box-shadow: 0 0 10px #ffd24a88; }
+    .stage.active { color: var(--gold); }
+    .stage.active .dot {
+      background: var(--grad); border-color: transparent;
+      box-shadow: 0 0 16px rgba(255, 210, 74, 0.6);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 50% { box-shadow: 0 0 26px rgba(255, 210, 74, 0.9); } }
     .stage.done { color: #7dd87d; }
-    .stage.done .dot { background: #7dd87d; }
-    .bar { height: 6px; background: #2a2a35; border-radius: 3px; overflow: hidden; }
-    .bar > div {
-      height: 100%; width: 0%;
-      background: linear-gradient(90deg, #ffd24a, #ff8c3b);
-      transition: width 0.4s;
-    }
-    #stageMsg { margin-top: 10px; color: #999; font-size: 0.85em; min-height: 20px; }
-
-    /* Result */
+    .stage.done .dot { background: #7dd87d; border-color: transparent; }
+    #stageMsg { margin-top: 12px; color: var(--text-dim); font-size: 0.85em; min-height: 20px; }
     #result { display: none; }
-    video { width: 100%; border-radius: 8px; margin-top: 6px; background: #000; }
+    video { width: 100%; border-radius: 12px; margin-top: 8px; background: #000; }
     a.download {
-      display: block; text-align: center; margin-top: 14px; padding: 12px;
-      background: linear-gradient(135deg, #ffd24a, #ff8c3b);
-      color: #1a1a22; font-weight: 700; border-radius: 8px; text-decoration: none;
+      display: block; text-align: center; margin-top: 16px; padding: 13px;
+      background: var(--grad); color: #16161d; font-weight: 700;
+      border-radius: 10px; text-decoration: none;
+      box-shadow: 0 6px 24px rgba(255, 140, 59, 0.28);
+      transition: filter 0.2s, box-shadow 0.25s;
     }
+    a.download:hover { filter: brightness(1.08); box-shadow: 0 8px 32px rgba(255, 140, 59, 0.4); }
+
+    .grid {
+      display: grid; gap: 18px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    }
+    .tcard {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 14px; overflow: hidden; cursor: pointer;
+      backdrop-filter: blur(20px);
+      transition: transform 0.2s, border-color 0.25s, box-shadow 0.25s;
+      position: relative;
+    }
+    .tcard:hover {
+      transform: translateY(-4px);
+      border-color: rgba(255, 210, 74, 0.35);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+    }
+    .thumb {
+      width: 100%; aspect-ratio: 16/10; background: #101018;
+      display: flex; align-items: center; justify-content: center;
+      color: #3a3a46; font-size: 1.8em; overflow: hidden;
+    }
+    .thumb video { width: 100%; height: 100%; object-fit: cover; margin: 0; border-radius: 0; }
+    .tmeta { padding: 12px 14px 14px; }
+    .tname {
+      color: #d8d8e0; font-size: 0.84em;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      margin-bottom: 8px;
+    }
+    .trow { display: flex; align-items: center; justify-content: space-between; }
+    .tid { color: var(--gold); font-weight: 700; font-size: 0.82em; }
+    .badge {
+      font-size: 0.7em; padding: 3px 10px; border-radius: 999px;
+      background: rgba(255, 255, 255, 0.07); color: #999;
+    }
+    .badge.done { background: rgba(125, 216, 125, 0.14); color: #7dd87d; }
+    .badge.failed { background: rgba(255, 107, 107, 0.14); color: #ff6b6b; }
+    .badge.processing { background: rgba(255, 210, 74, 0.14); color: var(--gold); }
+    .del {
+      position: absolute; top: 8px; right: 10px; z-index: 2;
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.55); color: #888;
+      opacity: 0; transition: opacity 0.2s, color 0.2s;
+      font-size: 1em;
+    }
+    .tcard:hover .del { opacity: 1; }
+    .del:hover { color: #ff6b6b; }
   </style>
 </head>
 <body>
-  <h1>NARAKA <span>HIGHLIGHT AI</span></h1>
-
-  <div class="card">
-    <div class="drop" id="drop">
-      <div>Drop a gameplay recording here<br>or click to choose a file</div>
-      <div class="hint">MP4 &middot; uploads are stored in the app</div>
+  <nav>
+    <div class="logo">NARAKA <span>HIGHLIGHT AI</span></div>
+    <div class="tabs">
+      <div class="tab active" data-view="create">New Task</div>
+      <div class="tab" data-view="process">Process</div>
+      <div class="tab" data-view="library">Library</div>
     </div>
-    <input type="file" id="file" accept="video/mp4" />
-    <div class="upbar" id="upbar"><div id="upfill"></div></div>
+  </nav>
 
-    <div class="divider">or use a local path (no copying)</div>
+  <main>
+    <section class="view active" id="view-create">
+      <div class="card">
+        <h2>Create a highlight reel</h2>
+        <div class="drop" id="drop">
+          <div class="big">Drop a gameplay recording here<br>or click to choose a file</div>
+          <div class="hint">MP4 &middot; uploads are stored in the app</div>
+        </div>
+        <input type="file" id="file" accept="video/mp4" />
+        <div class="upbar" id="upbar"><div id="upfill"></div></div>
 
-    <label for="path">Path to your recording (.mp4)</label>
-    <input type="text" id="path"
-           placeholder="C:\Users\you\Videos\match.mp4" spellcheck="false" />
-    <button id="create">Create Task</button>
-    <div id="status"></div>
-  </div>
+        <div class="divider">OR USE A LOCAL PATH (NO COPYING)</div>
 
-  <div class="card" id="pipeline">
-    <label>Task <span id="taskLabel">#-</span></label>
-    <div class="stages">
-      <div class="stage" id="st0"><div class="dot"></div>Detect</div>
-      <div class="stage" id="st1"><div class="dot"></div>Clips</div>
-      <div class="stage" id="st2"><div class="dot"></div>Montage</div>
-    </div>
-    <div class="bar"><div id="barFill"></div></div>
-    <div id="stageMsg"></div>
-    <label for="player" style="margin-top:14px">Player name (for the outro card)</label>
-    <input type="text" id="player" placeholder="your in-game ID" spellcheck="false" />
-    <button id="start">Start Processing</button>
-  </div>
+        <label for="path">Path to your recording (.mp4)</label>
+        <input type="text" id="path"
+               placeholder="C:\Users\you\Videos\match.mp4" spellcheck="false" />
+        <button id="create">Create Task</button>
+        <div id="status"></div>
+      </div>
+    </section>
 
-  <div class="card" id="result">
-    <label>Your highlight reel</label>
-    <video id="playerVideo" controls></video>
-    <a class="download" id="dl" download>Download montage_final.mp4</a>
-  </div>
+    <section class="view" id="view-process">
+      <div class="card" id="pipeline">
+        <h2>Task <span id="taskLabel" style="color:var(--gold)">#-</span></h2>
+        <div class="stages">
+          <div class="stage" id="st0"><div class="dot"></div>Detect</div>
+          <div class="stage" id="st1"><div class="dot"></div>Clips</div>
+          <div class="stage" id="st2"><div class="dot"></div>Montage</div>
+        </div>
+        <div class="bar"><div id="barFill"></div></div>
+        <div id="stageMsg"></div>
+        <label for="player" style="margin-top:16px">Player name (for the outro card)</label>
+        <input type="text" id="player" placeholder="your in-game ID" spellcheck="false" />
+        <button id="start">Start Processing</button>
+      </div>
+
+      <div class="card" id="result">
+        <h2>Your highlight reel</h2>
+        <video id="player-video" controls></video>
+        <a class="download" id="dl" download>Download montage_final.mp4</a>
+      </div>
+    </section>
+
+    <section class="view" id="view-library">
+      <div class="grid" id="historyList"></div>
+    </section>
+  </main>
 
   <script>
     const $ = (id) => document.getElementById(id);
     let taskId = null;
+
+    function switchView(name) {
+      document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+      $(`view-${name}`).classList.add("active");
+      document.querySelector(`.tab[data-view="${name}"]`).classList.add("active");
+      if (name === "library") loadHistory();
+    }
+    document.querySelectorAll(".tab").forEach((t) =>
+      t.addEventListener("click", () => switchView(t.dataset.view)));
 
     function setStatus(msg, cls) { $("status").textContent = msg; $("status").className = cls || ""; }
     function stageMsg(msg) { $("stageMsg").textContent = msg; }
@@ -145,10 +282,9 @@
     function showPipeline(id) {
       taskId = id;
       $("taskLabel").textContent = `#${id}`;
-      $("pipeline").style.display = "block";
+      switchView("process");
     }
 
-    // ---- Mode 1: drag & drop upload (XHR for progress events) ----
     const drop = $("drop"), fileInput = $("file");
     drop.addEventListener("click", () => fileInput.click());
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
@@ -184,6 +320,7 @@
           const body = JSON.parse(xhr.responseText);
           if (xhr.status === 200 || xhr.status === 201) {
             setStatus(`Task #${body.id} ready — ${f.name}`, "ok");
+            resetPipelineUI();
             showPipeline(body.id);
           } else {
             setStatus(`Upload failed: ${body.detail || xhr.status}`, "err");
@@ -199,7 +336,6 @@
       xhr.send(form);
     }
 
-    // ---- Mode 2: local path (zero-copy) ----
     $("create").addEventListener("click", async () => {
       const raw = $("path").value.trim().replace(/^"|"$/g, "");
       if (!raw.toLowerCase().endsWith(".mp4")) {
@@ -219,12 +355,13 @@
         const body = await res.json().catch(() => ({}));
         if (res.ok) {
           setStatus(`Task #${body.id} created — ${fileName}`, "ok");
+          resetPipelineUI();
           showPipeline(body.id);
         } else {
           const m = (body.detail || "").match(/id=(\d+)/);
           if (m) {
             setStatus(`Using existing task #${m[1]} for this file.`, "ok");
-            showPipeline(parseInt(m[1], 10));
+            adoptTask(parseInt(m[1], 10));
           } else {
             throw new Error(body.detail || `HTTP ${res.status}`);
           }
@@ -236,8 +373,13 @@
       }
     });
 
-    // ---- Pipeline ----
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    function resetPipelineUI() {
+      stageMsg(""); setBar(0);
+      [0, 1, 2].forEach((i) => markStage(i, null));
+      $("result").style.display = "none";
+    }
 
     async function pollUntilDone(label) {
       while (true) {
@@ -279,24 +421,91 @@
 
         fetch(`/api/tasks/${taskId}/thumbnails`, { method: "POST" }).catch(() => {});
 
-        const bgm = encodeURIComponent(
-          "C:/Users/adwar/projects/highlight-ai/assets/bgm/epic_rock.mp3");
+        const bgm = encodeURIComponent("C:/Users/adwar/projects/highlight-ai/assets/bgm/epic_rock.mp3");
         const pn = encodeURIComponent($("player").value.trim());
         await runStage(2, "Building montage", () =>
           fetch(`/api/tasks/${taskId}/montage?bgm=${bgm}&captions=true&transitions=true&intro_outro=true&player_name=${pn}`,
                 { method: "POST" }));
 
         stageMsg("All done!");
-        const url = `/clips/${taskId}/montage_final.mp4`;
-        $("playerVideo").src = url;
-        $("dl").href = url;
-        $("result").style.display = "block";
+        showMontage(taskId);
       } catch (e) {
         stageMsg(`Error: ${e.message}`);
       } finally {
         $("start").disabled = false;
       }
     });
+
+    function showMontage(id) {
+      const url = `/clips/${id}/montage_final.mp4`;
+      $("player-video").src = url;
+      $("dl").href = url;
+      $("result").style.display = "block";
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/tasks/?limit=20");
+        if (!res.ok) return;
+        const body = await res.json();
+        const tasks = Array.isArray(body) ? body : (body.tasks || body.items || []);
+        const list = $("historyList");
+        list.innerHTML = "";
+        if (!tasks.length) {
+          list.innerHTML = '<div class="hint">No tasks yet.</div>';
+          return;
+        }
+        for (const t of tasks) {
+          const card = document.createElement("div");
+          card.className = "tcard";
+          card.innerHTML =
+            `<span class="del" title="Delete">&times;</span>` +
+            `<div class="thumb" id="thumb-${t.id}">&#9654;</div>` +
+            `<div class="tmeta">` +
+              `<div class="tname">${t.file_name || t.file_path || ""}</div>` +
+              `<div class="trow"><span class="tid">#${t.id}</span>` +
+              `<span class="badge ${t.status}">${t.status}</span></div>` +
+            `</div>`;
+          card.querySelector(".del").addEventListener("click", async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Delete task #${t.id} and all its files?`)) return;
+            await fetch(`/api/tasks/${t.id}`, { method: "DELETE" });
+            loadHistory();
+          });
+          card.addEventListener("click", () => adoptTask(t.id));
+          list.appendChild(card);
+
+          const url = `/clips/${t.id}/montage_final.mp4`;
+          fetch(url, { method: "HEAD" }).then((h) => {
+            if (h.ok) {
+              const v = document.createElement("video");
+              v.src = `${url}#t=4`;
+              v.muted = true; v.preload = "metadata";
+              const holder = $(`thumb-${t.id}`);
+              holder.textContent = "";
+              holder.appendChild(v);
+            }
+          }).catch(() => {});
+        }
+      } catch { }
+    }
+
+    async function adoptTask(id) {
+      resetPipelineUI();
+      showPipeline(id);
+      const url = `/clips/${id}/montage_final.mp4`;
+      try {
+        const head = await fetch(url, { method: "HEAD" });
+        if (head.ok) {
+          showMontage(id);
+          stageMsg("Previously rendered montage loaded.");
+        } else {
+          stageMsg("No montage rendered yet — press Start Processing.");
+        }
+      } catch {
+        stageMsg("No montage rendered yet — press Start Processing.");
+      }
+    }
   </script>
 </body>
 </html>

@@ -723,6 +723,39 @@ def get_task_by_id(task_id: int, db: Session = Depends(get_db)):
     )
 
 
+@router.delete("/{task_id}", status_code=204)
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    """Delete a task, its DB rows, and its on-disk artifacts.
+
+    The source video is removed ONLY if it lives in our uploads/ folder
+    (app-owned copy). Videos referenced by local path are never touched.
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    for d in (
+        BACKEND_DIR / "frames" / str(task_id),
+        BACKEND_DIR / "clips" / str(task_id),
+        BACKEND_DIR / "thumbnails" / str(task_id),
+    ):
+        shutil.rmtree(d, ignore_errors=True)
+
+    uploads_dir = BACKEND_DIR / "uploads"
+    fp = Path(task.file_path)
+    try:
+        if fp.exists() and uploads_dir in fp.parents:
+            fp.unlink()
+    except OSError:
+        pass  # best-effort: a locked file shouldn't block the delete
+
+    db.query(Highlight).filter(Highlight.task_id == task_id).delete()
+    db.query(Clip).filter(Clip.task_id == task_id).delete()
+    db.delete(task)
+    db.commit()
+
+
 # ============================================
 # POST endpoints
 # ============================================
