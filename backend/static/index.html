@@ -164,6 +164,34 @@
     .stage.done { color: #7dd87d; }
     .stage.done .dot { background: #7dd87d; border-color: transparent; }
     #stageMsg { margin-top: 12px; color: var(--dim); font-size: 0.85em; min-height: 20px; }
+    .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin-top: 18px; }
+    .opt { display: flex; align-items: center; justify-content: space-between; font-size: 0.86em; color: var(--dim); }
+    .switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; }
+    .switch input { display: none; }
+    .switch .knob {
+      position: absolute; inset: 0; border-radius: 999px;
+      background: rgba(255,255,255,0.1); cursor: pointer; transition: background 0.2s;
+    }
+    .switch .knob::after {
+      content: ""; position: absolute; top: 2.5px; left: 3px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #888; transition: transform 0.2s, background 0.2s;
+    }
+    .switch input:checked + .knob { background: rgba(255, 170, 60, 0.35); }
+    .switch input:checked + .knob::after { transform: translateX(16px); background: var(--gold); }
+    select {
+      width: 100%; padding: 10px 12px; margin-top: 4px;
+      background: rgba(10,10,16,0.7); color: #ececf1;
+      border: 1px solid var(--line); border-radius: 10px; outline: none;
+      font-size: 0.9em;
+    }
+    .mini-btn {
+      float: right; font-size: 0.82em; color: var(--gold);
+      padding: 4px 12px; border: 1px solid rgba(255, 210, 74, 0.35);
+      border-radius: 999px; cursor: pointer; user-select: none;
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+    .mini-btn:hover { background: rgba(255, 210, 74, 0.12); box-shadow: 0 0 12px rgba(255, 210, 74, 0.25); }
 
     video { width: 100%; border-radius: 12px; background: #000; display: block; }
     #result { display: none; margin-top: 20px; }
@@ -287,6 +315,25 @@
           </div>
           <div class="bar"><div id="barFill"></div></div>
           <div id="stageMsg"></div>
+          <div class="opts">
+            <div class="opt">Slow motion
+              <label class="switch"><input type="checkbox" id="opt-slowmo" checked><span class="knob"></span></label>
+            </div>
+            <div class="opt">Transitions
+              <label class="switch"><input type="checkbox" id="opt-transitions" checked><span class="knob"></span></label>
+            </div>
+            <div class="opt">Captions
+              <label class="switch"><input type="checkbox" id="opt-captions" checked><span class="knob"></span></label>
+            </div>
+            <div class="opt">Intro / Outro
+              <label class="switch"><input type="checkbox" id="opt-intro" checked><span class="knob"></span></label>
+          </div>
+          </div>
+          <label for="bgmSel" style="margin-top:14px">Background music
+            <span id="bgmUp" class="mini-btn">+ Upload .mp3</span>
+          </label>
+          <input type="file" id="bgmFile" accept=".mp3,audio/mpeg" style="display:none" />
+          <select id="bgmSel"><option value="">No BGM</option></select>
           <label for="player" style="margin-top:16px">Player name (for the outro card)</label>
           <input type="text" id="player" placeholder="your in-game ID" spellcheck="false" />
           <button id="start">Start Processing</button>
@@ -534,15 +581,14 @@
           fetch(`/api/tasks/${taskId}/extract-frames?fps=1`, { method: "POST" }));
 
         await runStage(1, "Cutting clips", () =>
-          fetch(`/api/tasks/${taskId}/generate-clips?slowmo=true`, { method: "POST" }));
+          fetch(`/api/tasks/${taskId}/generate-clips?slowmo=${$("opt-slowmo").checked}`, { method: "POST" }));
 
         fetch(`/api/tasks/${taskId}/thumbnails`, { method: "POST" }).catch(() => {});
 
-        const bgm = encodeURIComponent(
-          "C:/Users/adwar/projects/highlight-ai/assets/bgm/epic_rock.mp3");
+        const bgm = encodeURIComponent($("bgmSel").value);
         const pn = encodeURIComponent($("player").value.trim());
         await runStage(2, "Building montage", () =>
-          fetch(`/api/tasks/${taskId}/montage?bgm=${bgm}&captions=true&transitions=true&intro_outro=true&player_name=${pn}`,
+          fetch(`/api/tasks/${taskId}/montage?bgm=${bgm}&captions=${$("opt-captions").checked}&transitions=${$("opt-transitions").checked}&intro_outro=${$("opt-intro").checked}&player_name=${pn}`,
                 { method: "POST" }));
 
         stageMsg("All done!");
@@ -627,6 +673,45 @@
         stageMsg("No montage rendered yet \u2014 press Start Processing.");
       }
     }
+
+    // ---- BGM list & upload ----
+    async function loadBgmList(selectPath) {
+      try {
+        const res = await fetch("/api/bgm/list");
+        if (!res.ok) return;
+        const { tracks } = await res.json();
+        const sel = $("bgmSel");
+        sel.innerHTML = '<option value="">No BGM</option>';
+        for (const t of tracks) {
+          const o = document.createElement("option");
+          o.value = t.path; o.textContent = t.name;
+          sel.appendChild(o);
+        }
+        if (selectPath) sel.value = selectPath;
+        else if (tracks.length) sel.selectedIndex = 1;
+      } catch { /* dropdown stays as-is */ }
+    }
+    loadBgmList();
+
+    $("bgmUp").addEventListener("click", () => $("bgmFile").click());
+    $("bgmFile").addEventListener("change", async () => {
+      const f = $("bgmFile").files[0];
+      if (!f) return;
+      const form = new FormData();
+      form.append("file", f);
+      stageMsg(`Uploading BGM ${f.name}\u2026`);
+      try {
+        const res = await fetch("/api/bgm/upload", { method: "POST", body: form });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+        await loadBgmList(body.path);
+        stageMsg(`BGM added: ${body.name}`);
+      } catch (e) {
+        stageMsg(`BGM upload failed: ${e.message}`);
+      } finally {
+        $("bgmFile").value = "";
+      }
+    });
   </script>
 </body>
 </html>
