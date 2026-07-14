@@ -6,107 +6,116 @@
   <style>
     :root {
       --bg: #0b0b10;
-      --card: rgba(26, 26, 36, 0.55);
+      --panel: rgba(24, 24, 34, 0.55);
       --line: rgba(255, 255, 255, 0.07);
       --gold: #ffd24a;
       --orange: #ff8c3b;
-      --text-dim: #9a9aa8;
+      --dim: #9a9aa8;
+      --faint: #5c5c68;
       --grad: linear-gradient(135deg, var(--gold), var(--orange));
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0; min-height: 100vh;
+      margin: 0; min-height: 100vh; display: flex;
       background:
-        radial-gradient(900px 420px at 50% -140px, rgba(255, 140, 59, 0.13), transparent 65%),
-        radial-gradient(700px 380px at 85% 12%, rgba(255, 210, 74, 0.05), transparent 60%),
+        radial-gradient(1000px 500px at 60% -160px, rgba(255, 140, 59, 0.12), transparent 65%),
+        radial-gradient(800px 400px at 100% 20%, rgba(255, 210, 74, 0.05), transparent 60%),
         var(--bg);
       color: #ececf1;
       font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
     }
-    nav {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 16px 36px;
-      position: sticky; top: 0; z-index: 10;
-      background: rgba(11, 11, 16, 0.72);
+
+    /* ================= Sidebar ================= */
+    aside {
+      width: 224px; min-height: 100vh; flex-shrink: 0;
+      display: flex; flex-direction: column;
+      padding: 26px 14px;
+      background: rgba(13, 13, 19, 0.72);
+      border-right: 1px solid var(--line);
       backdrop-filter: blur(18px);
-      border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; height: 100vh;
     }
-    .logo { letter-spacing: 0.18em; font-weight: 700; font-size: 1.02em; }
+    .logo { padding: 0 12px 26px; letter-spacing: 0.16em; font-weight: 700; font-size: 0.98em; }
     .logo span {
       background: var(--grad);
       -webkit-background-clip: text; background-clip: text; color: transparent;
     }
-    .tabs { display: flex; gap: 4px; background: rgba(255,255,255,0.04); padding: 4px; border-radius: 999px; }
-    .tab {
-      padding: 8px 20px; border-radius: 999px; cursor: pointer;
-      color: var(--text-dim); font-size: 0.88em; transition: color 0.2s, background 0.25s;
+    .nav-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 14px; margin-bottom: 4px;
+      border-radius: 10px; cursor: pointer;
+      color: var(--dim); font-size: 0.92em;
+      transition: background 0.2s, color 0.2s;
       user-select: none;
     }
-    .tab:hover { color: #fff; }
-    .tab.active { color: #16161d; font-weight: 700; background: var(--grad); }
-
-    main { display: flex; flex-direction: column; align-items: center; padding: 48px 20px 80px; }
-    .view { display: none; width: 100%; max-width: 560px; }
-    .view.active { display: block; animation: rise 0.35s ease; }
-    #view-library.active { max-width: 980px; }
-    @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-
-    .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 34px 40px; margin-bottom: 22px;
-      backdrop-filter: blur(20px);
-      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+    .nav-item svg { width: 18px; height: 18px; }
+    .nav-item:hover { color: #fff; background: rgba(255, 255, 255, 0.04); }
+    .nav-item.active {
+      color: #16161d; font-weight: 700; background: var(--grad);
+      box-shadow: 0 6px 20px rgba(255, 140, 59, 0.25);
     }
-    h2 { margin: 0 0 20px; font-size: 1.05em; font-weight: 600; letter-spacing: 0.04em; }
-    label { display: block; color: var(--text-dim); font-size: 0.84em; margin-bottom: 7px; }
+    .side-foot { margin-top: auto; padding: 0 14px; color: var(--faint); font-size: 0.72em; }
+
+    /* ================= Content ================= */
+    .content { flex: 1; padding: 38px 44px 80px; min-width: 0; }
+    .view { display: none; margin: 0 auto; width: 100%; }
+    .view.active { display: block; animation: rise 0.3s ease; }
+    #view-create { max-width: 660px; }
+    #view-process { max-width: 980px; }
+    #view-library { max-width: 1280px; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .page-title { font-size: 1.25em; font-weight: 650; margin: 0 0 22px; letter-spacing: 0.02em; }
+    .page-title small { color: var(--faint); font-weight: 400; font-size: 0.72em; margin-left: 10px; }
+
+    .panel {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 16px; padding: 26px 30px;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 16px 44px rgba(0, 0, 0, 0.4);
+    }
+    label { display: block; color: var(--dim); font-size: 0.84em; margin-bottom: 7px; }
     input[type="text"] {
-      width: 100%; padding: 13px 15px;
+      width: 100%; padding: 12px 14px;
       background: rgba(10, 10, 16, 0.7); color: #ececf1;
       border: 1px solid var(--line); border-radius: 10px;
-      font-size: 0.95em; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+      font-size: 0.94em; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
     }
     input[type="text"]:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(255, 210, 74, 0.12); }
-    .hint { color: #62626e; font-size: 0.8em; margin-top: 9px; }
+    .hint { color: var(--faint); font-size: 0.8em; margin-top: 9px; }
     button {
-      margin-top: 20px; width: 100%; padding: 13px;
+      margin-top: 18px; width: 100%; padding: 12px;
       background: var(--grad); color: #16161d;
-      font-weight: 700; font-size: 1em;
+      font-weight: 700; font-size: 0.98em;
       border: none; border-radius: 10px; cursor: pointer;
-      box-shadow: 0 6px 24px rgba(255, 140, 59, 0.28);
+      box-shadow: 0 6px 22px rgba(255, 140, 59, 0.28);
       transition: transform 0.12s, box-shadow 0.25s, filter 0.2s;
     }
-    button:hover { filter: brightness(1.08); box-shadow: 0 8px 32px rgba(255, 140, 59, 0.4); }
+    button:hover { filter: brightness(1.08); box-shadow: 0 8px 30px rgba(255, 140, 59, 0.4); }
     button:active { transform: scale(0.985); }
     button:disabled { filter: grayscale(1); box-shadow: none; cursor: not-allowed; }
-    #status { margin-top: 16px; min-height: 22px; font-size: 0.9em; }
+    #status { margin-top: 14px; min-height: 22px; font-size: 0.88em; }
     .ok { color: #7dd87d; } .err { color: #ff6b6b; }
 
+    /* ---- New Task ---- */
     .drop {
       border: 1.5px dashed rgba(255, 255, 255, 0.14);
-      border-radius: 13px; padding: 42px 16px;
+      border-radius: 13px; padding: 44px 16px;
       cursor: pointer; text-align: center;
       transition: border-color 0.25s, background 0.25s, box-shadow 0.25s;
     }
-    .drop .big { font-size: 1.02em; }
     .drop:hover, .drop.over {
       border-color: var(--gold);
       background: rgba(255, 210, 74, 0.045);
-      box-shadow: inset 0 0 40px rgba(255, 140, 59, 0.06);
+      box-shadow: inset 0 0 44px rgba(255, 140, 59, 0.06);
     }
     #file { display: none; }
     .divider {
       display: flex; align-items: center; gap: 14px;
-      color: #55555f; font-size: 0.78em; margin: 22px 0;
-      letter-spacing: 0.05em;
+      color: var(--faint); font-size: 0.76em; margin: 20px 0;
+      letter-spacing: 0.06em;
     }
     .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-
-    .upbar, .bar {
-      height: 6px; background: rgba(255, 255, 255, 0.06);
-      border-radius: 3px; overflow: hidden;
-    }
+    .upbar, .bar { height: 6px; background: rgba(255, 255, 255, 0.06); border-radius: 3px; overflow: hidden; }
     .upbar { margin-top: 16px; display: none; }
     .upbar > div, .bar > div {
       height: 100%; width: 0%;
@@ -115,15 +124,31 @@
       transition: width 0.3s;
     }
 
-    .stages {
-      display: flex; justify-content: space-between; position: relative;
-      margin: 24px 0 10px;
+    /* ---- Process layout ---- */
+    .proc-grid { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+    @media (max-width: 1100px) { .proc-grid { grid-template-columns: 1fr; } }
+    .meta-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 9px 0; border-bottom: 1px solid var(--line);
+      font-size: 0.86em;
     }
+    .meta-row:last-child { border-bottom: none; }
+    .meta-row .k { color: var(--faint); }
+    .meta-row .v { color: #d8d8e0; font-weight: 600; }
+    .badge {
+      font-size: 0.72em; padding: 3px 11px; border-radius: 999px;
+      background: rgba(255, 255, 255, 0.07); color: #999;
+    }
+    .badge.done { background: rgba(125, 216, 125, 0.14); color: #7dd87d; }
+    .badge.failed { background: rgba(255, 107, 107, 0.14); color: #ff6b6b; }
+    .badge.processing, .badge.pending { background: rgba(255, 210, 74, 0.14); color: var(--gold); }
+
+    .stages { display: flex; justify-content: space-between; position: relative; margin: 22px 0 10px; }
     .stages::before {
       content: ""; position: absolute; top: 8px; left: 16%; right: 16%;
       height: 2px; background: var(--line);
     }
-    .stage { flex: 1; text-align: center; color: #55555f; font-size: 0.8em; position: relative; transition: color 0.3s; }
+    .stage { flex: 1; text-align: center; color: var(--faint); font-size: 0.8em; position: relative; transition: color 0.3s; }
     .stage .dot {
       width: 16px; height: 16px; border-radius: 50%; margin: 0 auto 8px;
       background: #22222c; border: 2px solid #33333f;
@@ -138,28 +163,42 @@
     @keyframes pulse { 50% { box-shadow: 0 0 26px rgba(255, 210, 74, 0.9); } }
     .stage.done { color: #7dd87d; }
     .stage.done .dot { background: #7dd87d; border-color: transparent; }
-    #stageMsg { margin-top: 12px; color: var(--text-dim); font-size: 0.85em; min-height: 20px; }
-    #result { display: none; }
-    video { width: 100%; border-radius: 12px; margin-top: 8px; background: #000; }
+    #stageMsg { margin-top: 12px; color: var(--dim); font-size: 0.85em; min-height: 20px; }
+
+    video { width: 100%; border-radius: 12px; background: #000; display: block; }
+    #result { display: none; margin-top: 20px; }
     a.download {
-      display: block; text-align: center; margin-top: 16px; padding: 13px;
+      display: block; text-align: center; margin-top: 16px; padding: 12px;
       background: var(--grad); color: #16161d; font-weight: 700;
       border-radius: 10px; text-decoration: none;
-      box-shadow: 0 6px 24px rgba(255, 140, 59, 0.28);
+      box-shadow: 0 6px 22px rgba(255, 140, 59, 0.28);
       transition: filter 0.2s, box-shadow 0.25s;
     }
-    a.download:hover { filter: brightness(1.08); box-shadow: 0 8px 32px rgba(255, 140, 59, 0.4); }
+    a.download:hover { filter: brightness(1.08); box-shadow: 0 8px 30px rgba(255, 140, 59, 0.4); }
 
-    .grid {
-      display: grid; gap: 18px;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    /* clip strip */
+    #clipStrip { display: none; margin-top: 20px; }
+    .strip {
+      display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px;
     }
+    .strip::-webkit-scrollbar { height: 8px; }
+    .strip::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+    .clip-thumb {
+      flex: 0 0 180px; border-radius: 10px; overflow: hidden;
+      border: 1px solid var(--line); cursor: pointer;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .clip-thumb:hover { border-color: rgba(255, 210, 74, 0.4); transform: translateY(-2px); }
+    .clip-thumb video { aspect-ratio: 16/10; object-fit: cover; border-radius: 0; }
+    .clip-thumb .cname { padding: 7px 10px; font-size: 0.74em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* ---- Library ---- */
+    .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
     .tcard {
-      background: var(--card); border: 1px solid var(--line);
+      background: var(--panel); border: 1px solid var(--line);
       border-radius: 14px; overflow: hidden; cursor: pointer;
-      backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px); position: relative;
       transition: transform 0.2s, border-color 0.25s, box-shadow 0.25s;
-      position: relative;
     }
     .tcard:hover {
       transform: translateY(-4px);
@@ -167,11 +206,11 @@
       box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
     }
     .thumb {
-      width: 100%; aspect-ratio: 16/10; background: #101018;
+      width: 100%; aspect-ratio: 16/10; background: #0f0f16;
       display: flex; align-items: center; justify-content: center;
-      color: #3a3a46; font-size: 1.8em; overflow: hidden;
+      color: #33333e; font-size: 1.7em; overflow: hidden;
     }
-    .thumb video { width: 100%; height: 100%; object-fit: cover; margin: 0; border-radius: 0; }
+    .thumb video { width: 100%; height: 100%; object-fit: cover; }
     .tmeta { padding: 12px 14px 14px; }
     .tname {
       color: #d8d8e0; font-size: 0.84em;
@@ -180,82 +219,98 @@
     }
     .trow { display: flex; align-items: center; justify-content: space-between; }
     .tid { color: var(--gold); font-weight: 700; font-size: 0.82em; }
-    .badge {
-      font-size: 0.7em; padding: 3px 10px; border-radius: 999px;
-      background: rgba(255, 255, 255, 0.07); color: #999;
-    }
-    .badge.done { background: rgba(125, 216, 125, 0.14); color: #7dd87d; }
-    .badge.failed { background: rgba(255, 107, 107, 0.14); color: #ff6b6b; }
-    .badge.processing { background: rgba(255, 210, 74, 0.14); color: var(--gold); }
     .del {
       position: absolute; top: 8px; right: 10px; z-index: 2;
       width: 26px; height: 26px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
       background: rgba(0, 0, 0, 0.55); color: #888;
       opacity: 0; transition: opacity 0.2s, color 0.2s;
-      font-size: 1em;
     }
     .tcard:hover .del { opacity: 1; }
     .del:hover { color: #ff6b6b; }
   </style>
 </head>
 <body>
-  <nav>
+  <aside>
     <div class="logo">NARAKA <span>HIGHLIGHT AI</span></div>
-    <div class="tabs">
-      <div class="tab active" data-view="create">New Task</div>
-      <div class="tab" data-view="process">Process</div>
-      <div class="tab" data-view="library">Library</div>
+    <div class="nav-item active" data-view="create">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+      New Task
     </div>
-  </nav>
+    <div class="nav-item" data-view="process">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+      Process
+    </div>
+    <div class="nav-item" data-view="library">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      Library
+    </div>
+    <div class="side-foot">highlight-ai &middot; v0.9</div>
+  </aside>
 
-  <main>
+  <div class="content">
+    <!-- ======== New Task ======== -->
     <section class="view active" id="view-create">
-      <div class="card">
-        <h2>Create a highlight reel</h2>
+      <h2 class="page-title">Create a highlight reel</h2>
+      <div class="panel">
         <div class="drop" id="drop">
-          <div class="big">Drop a gameplay recording here<br>or click to choose a file</div>
+          <div>Drop a gameplay recording here<br>or click to choose a file</div>
           <div class="hint">MP4 &middot; uploads are stored in the app</div>
         </div>
         <input type="file" id="file" accept="video/mp4" />
         <div class="upbar" id="upbar"><div id="upfill"></div></div>
-
         <div class="divider">OR USE A LOCAL PATH (NO COPYING)</div>
-
         <label for="path">Path to your recording (.mp4)</label>
-        <input type="text" id="path"
-               placeholder="C:\Users\you\Videos\match.mp4" spellcheck="false" />
+        <input type="text" id="path" placeholder="C:\Users\you\Videos\match.mp4" spellcheck="false" />
         <button id="create">Create Task</button>
         <div id="status"></div>
       </div>
     </section>
 
+    <!-- ======== Process ======== -->
     <section class="view" id="view-process">
-      <div class="card" id="pipeline">
-        <h2>Task <span id="taskLabel" style="color:var(--gold)">#-</span></h2>
-        <div class="stages">
-          <div class="stage" id="st0"><div class="dot"></div>Detect</div>
-          <div class="stage" id="st1"><div class="dot"></div>Clips</div>
-          <div class="stage" id="st2"><div class="dot"></div>Montage</div>
+      <h2 class="page-title">Task <span id="taskLabel" style="color:var(--gold)">#-</span><small id="taskFile"></small></h2>
+      <div class="proc-grid">
+        <div class="panel" id="infoPanel">
+          <label>Video info</label>
+          <div class="meta-row"><span class="k">Status</span><span class="v" id="m-status">-</span></div>
+          <div class="meta-row"><span class="k">Duration</span><span class="v" id="m-duration">-</span></div>
+          <div class="meta-row"><span class="k">Resolution</span><span class="v" id="m-res">-</span></div>
+          <div class="meta-row"><span class="k">FPS</span><span class="v" id="m-fps">-</span></div>
+          <div class="meta-row"><span class="k">File size</span><span class="v" id="m-size">-</span></div>
         </div>
-        <div class="bar"><div id="barFill"></div></div>
-        <div id="stageMsg"></div>
-        <label for="player" style="margin-top:16px">Player name (for the outro card)</label>
-        <input type="text" id="player" placeholder="your in-game ID" spellcheck="false" />
-        <button id="start">Start Processing</button>
+        <div class="panel">
+          <div class="stages">
+            <div class="stage" id="st0"><div class="dot"></div>Detect</div>
+            <div class="stage" id="st1"><div class="dot"></div>Clips</div>
+            <div class="stage" id="st2"><div class="dot"></div>Montage</div>
+          </div>
+          <div class="bar"><div id="barFill"></div></div>
+          <div id="stageMsg"></div>
+          <label for="player" style="margin-top:16px">Player name (for the outro card)</label>
+          <input type="text" id="player" placeholder="your in-game ID" spellcheck="false" />
+          <button id="start">Start Processing</button>
+        </div>
       </div>
 
-      <div class="card" id="result">
-        <h2>Your highlight reel</h2>
+      <div class="panel" id="result">
+        <label>Your highlight reel</label>
         <video id="player-video" controls></video>
         <a class="download" id="dl" download>Download montage_final.mp4</a>
       </div>
+
+      <div class="panel" id="clipStrip">
+        <label>Individual clips</label>
+        <div class="strip" id="stripInner"></div>
+      </div>
     </section>
 
+    <!-- ======== Library ======== -->
     <section class="view" id="view-library">
+      <h2 class="page-title">Library</h2>
       <div class="grid" id="historyList"></div>
     </section>
-  </main>
+  </div>
 
   <script>
     const $ = (id) => document.getElementById(id);
@@ -263,12 +318,12 @@
 
     function switchView(name) {
       document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+      document.querySelectorAll(".nav-item").forEach((t) => t.classList.remove("active"));
       $(`view-${name}`).classList.add("active");
-      document.querySelector(`.tab[data-view="${name}"]`).classList.add("active");
+      document.querySelector(`.nav-item[data-view="${name}"]`).classList.add("active");
       if (name === "library") loadHistory();
     }
-    document.querySelectorAll(".tab").forEach((t) =>
+    document.querySelectorAll(".nav-item").forEach((t) =>
       t.addEventListener("click", () => switchView(t.dataset.view)));
 
     function setStatus(msg, cls) { $("status").textContent = msg; $("status").className = cls || ""; }
@@ -282,9 +337,68 @@
     function showPipeline(id) {
       taskId = id;
       $("taskLabel").textContent = `#${id}`;
+      loadTaskInfo(id);
+      loadClips(id);
       switchView("process");
     }
 
+    // ---- Task metadata panel ----
+    function fmtDur(s) {
+      if (s == null) return "-";
+      const m = Math.floor(s / 60), sec = Math.round(s % 60);
+      return `${m}:${String(sec).padStart(2, "0")}`;
+    }
+    function fmtSize(b) {
+      if (b == null) return "-";
+      return b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : (b / 1e6).toFixed(0) + " MB";
+    }
+    async function loadTaskInfo(id) {
+      try {
+        const res = await fetch(`/api/tasks/${id}`);
+        if (!res.ok) return;
+        const t = await res.json();
+        $("taskFile").textContent = t.file_name || "";
+        $("m-status").innerHTML = `<span class="badge ${t.status}">${t.status}</span>`;
+        $("m-duration").textContent = fmtDur(t.duration_sec);
+        $("m-res").textContent = (t.width && t.height) ? `${t.width}\u00d7${t.height}` : "-";
+        $("m-fps").textContent = t.fps ? Math.round(t.fps) : "-";
+        $("m-size").textContent = fmtSize(t.file_size);
+      } catch { /* best-effort */ }
+    }
+
+    // ---- Clip strip ----
+    async function loadClips(id) {
+      $("clipStrip").style.display = "none";
+      try {
+        const res = await fetch(`/api/tasks/${id}/clips`);
+        if (!res.ok) return;
+        const body = await res.json();
+        const clips = Array.isArray(body) ? body : (body.clips || body.items || []);
+        if (!clips.length) return;
+        const inner = $("stripInner");
+        inner.innerHTML = "";
+        for (const c of clips) {
+          const p = (c.output_path || "").replace(/\\/g, "/");
+          const fname = p.split("/").pop();
+          if (!fname) continue;
+          const div = document.createElement("div");
+          div.className = "clip-thumb";
+          div.innerHTML =
+            `<video src="/clips/${id}/${fname}#t=1" muted preload="metadata"></video>` +
+            `<div class="cname">${fname}</div>`;
+          div.addEventListener("click", () => {
+            $("player-video").src = `/clips/${id}/${fname}`;
+            $("result").style.display = "block";
+            $("player-video").play();
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          });
+          inner.appendChild(div);
+        }
+        $("clipStrip").style.display = "block";
+      } catch { /* best-effort */ }
+    }
+
+    // ---- Upload mode ----
     const drop = $("drop"), fileInput = $("file");
     drop.addEventListener("click", () => fileInput.click());
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
@@ -307,7 +421,7 @@
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/tasks/upload");
       $("upbar").style.display = "block";
-      setStatus(`Uploading ${f.name}…`);
+      setStatus(`Uploading ${f.name}\u2026`);
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
           $("upfill").style.width = `${Math.round((e.loaded / e.total) * 100)}%`;
@@ -319,7 +433,7 @@
         try {
           const body = JSON.parse(xhr.responseText);
           if (xhr.status === 200 || xhr.status === 201) {
-            setStatus(`Task #${body.id} ready — ${f.name}`, "ok");
+            setStatus(`Task #${body.id} ready \u2014 ${f.name}`, "ok");
             resetPipelineUI();
             showPipeline(body.id);
           } else {
@@ -336,6 +450,7 @@
       xhr.send(form);
     }
 
+    // ---- Path mode ----
     $("create").addEventListener("click", async () => {
       const raw = $("path").value.trim().replace(/^"|"$/g, "");
       if (!raw.toLowerCase().endsWith(".mp4")) {
@@ -345,7 +460,7 @@
       const filePath = raw.replace(/\\/g, "/");
       const fileName = filePath.split("/").pop();
       $("create").disabled = true;
-      setStatus("Creating task…");
+      setStatus("Creating task\u2026");
       try {
         const res = await fetch("/api/tasks/", {
           method: "POST",
@@ -354,7 +469,7 @@
         });
         const body = await res.json().catch(() => ({}));
         if (res.ok) {
-          setStatus(`Task #${body.id} created — ${fileName}`, "ok");
+          setStatus(`Task #${body.id} created \u2014 ${fileName}`, "ok");
           resetPipelineUI();
           showPipeline(body.id);
         } else {
@@ -373,12 +488,14 @@
       }
     });
 
+    // ---- Pipeline ----
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     function resetPipelineUI() {
       stageMsg(""); setBar(0);
       [0, 1, 2].forEach((i) => markStage(i, null));
       $("result").style.display = "none";
+      $("clipStrip").style.display = "none";
     }
 
     async function pollUntilDone(label) {
@@ -391,14 +508,14 @@
         if (p.status === "done") return;
         const pct = p.progress ?? 0;
         setBar(pct);
-        stageMsg(`${label}… ${pct}%`);
+        stageMsg(`${label}\u2026 ${pct}%`);
       }
     }
 
     async function runStage(i, label, startFn) {
       markStage(i, "active");
       setBar(0);
-      stageMsg(`${label}…`);
+      stageMsg(`${label}\u2026`);
       const res = await startFn();
       if (!res.ok && res.status !== 202) {
         const err = await res.json().catch(() => ({}));
@@ -421,7 +538,8 @@
 
         fetch(`/api/tasks/${taskId}/thumbnails`, { method: "POST" }).catch(() => {});
 
-        const bgm = encodeURIComponent("C:/Users/adwar/projects/highlight-ai/assets/bgm/epic_rock.mp3");
+        const bgm = encodeURIComponent(
+          "C:/Users/adwar/projects/highlight-ai/assets/bgm/epic_rock.mp3");
         const pn = encodeURIComponent($("player").value.trim());
         await runStage(2, "Building montage", () =>
           fetch(`/api/tasks/${taskId}/montage?bgm=${bgm}&captions=true&transitions=true&intro_outro=true&player_name=${pn}`,
@@ -429,6 +547,8 @@
 
         stageMsg("All done!");
         showMontage(taskId);
+        loadTaskInfo(taskId);
+        loadClips(taskId);
       } catch (e) {
         stageMsg(`Error: ${e.message}`);
       } finally {
@@ -443,6 +563,7 @@
       $("result").style.display = "block";
     }
 
+    // ---- Library ----
     async function loadHistory() {
       try {
         const res = await fetch("/api/tasks/?limit=20");
@@ -487,7 +608,7 @@
             }
           }).catch(() => {});
         }
-      } catch { }
+      } catch { /* best-effort */ }
     }
 
     async function adoptTask(id) {
@@ -500,10 +621,10 @@
           showMontage(id);
           stageMsg("Previously rendered montage loaded.");
         } else {
-          stageMsg("No montage rendered yet — press Start Processing.");
+          stageMsg("No montage rendered yet \u2014 press Start Processing.");
         }
       } catch {
-        stageMsg("No montage rendered yet — press Start Processing.");
+        stageMsg("No montage rendered yet \u2014 press Start Processing.");
       }
     }
   </script>

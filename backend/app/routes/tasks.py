@@ -297,6 +297,11 @@ def _run_clip_generation_in_background(task_id: int, slowmo: bool = True) -> Non
                 highlight_ids=json.dumps([hl.id]),  # one highlight per clip (MVP)
             )
             db.add(clip)
+            # Real per-clip progress for the frontend poll.
+            update_task_status(
+                db, task, status="processing",
+                progress=int((idx + 1) / len(highlights) * 100),
+            )
 
         db.commit()
         update_task_status(db, task, status="done", progress=100)
@@ -356,6 +361,7 @@ def _run_montage_in_background(
         OUTRO_SEC = 3.0
         intro_path = None
         outro_path = None
+        update_task_status(db, task, status="processing", progress=10)
         if intro_outro:
             # Intro background: a clean gameplay frame from the first kill.
             first_kill_bg = None
@@ -432,6 +438,8 @@ def _run_montage_in_background(
                 error_message=f"Montage concat failed: {e}",
             )
             return
+
+        update_task_status(db, task, status="processing", progress=50)
 
         # --- Step 3: build the caption timeline ---
         caption_map = {
@@ -527,6 +535,7 @@ def _run_montage_in_background(
         # --- Step 4: finalize — optionally mix BGM, optionally burn captions ---
         # add_bgm handles all four combinations; bgm_path=None just skips BGM
         # while still burning captions, so captions no longer depend on BGM.
+        update_task_status(db, task, status="processing", progress=75)
         try:
             add_bgm(
                 str(raw_montage), str(final_montage),
@@ -938,6 +947,12 @@ def generate_task_clips(
             ),
         )
 
+    if task.status == "processing":
+        raise HTTPException(
+            status_code=409,
+            detail="Task is already processing; wait for the current stage to finish",
+        )
+
     update_task_status(db, task, status="processing", progress=0)
     background_tasks.add_task(_run_clip_generation_in_background, task_id, slowmo)
 
@@ -986,6 +1001,11 @@ def generate_task_montage(
     # Strip stray whitespace from the path (e.g. an accidental leading space
     # in the query param), so Path.exists() does not silently miss the file.
     bgm_clean = bgm.strip() if bgm else None
+    if task.status == "processing":
+        raise HTTPException(
+            status_code=409,
+            detail="Task is already processing; wait for the current stage to finish",
+        )
     update_task_status(db, task, status="processing", progress=0)
     background_tasks.add_task(
         _run_montage_in_background, task_id, bgm_clean, captions, transitions, intro_outro, player_name
