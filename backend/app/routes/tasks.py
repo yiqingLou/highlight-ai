@@ -1161,7 +1161,7 @@ def get_task_progress(task_id: int, db: Session = Depends(get_db)):
     return {
         "task_id": task_id,
         "status": task.status,
-        "progress": percent,
+        "progress": 100 if task.status == "done" else (task.progress or 0),
         "progress_detail": {
             "phase": phase,
             "current_frame": current_frame_count,

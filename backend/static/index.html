@@ -545,7 +545,7 @@
       $("clipStrip").style.display = "none";
     }
 
-    async function pollUntilDone(label) {
+    async function pollUntilDone(label, useFrames) {
       while (true) {
         await sleep(2000);
         const res = await fetch(`/api/tasks/${taskId}/progress`);
@@ -553,7 +553,9 @@
         const p = await res.json();
         if (p.status === "failed") throw new Error(p.error_message || `${label} failed`);
         if (p.status === "done") return;
-        const pct = p.progress ?? 0;
+        const pct = useFrames
+          ? (p.progress_detail?.percent ?? p.progress ?? 0)
+          : (p.progress ?? 0);
         setBar(pct);
         stageMsg(`${label}\u2026 ${pct}%`);
       }
@@ -568,7 +570,7 @@
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `${label}: HTTP ${res.status}`);
       }
-      await pollUntilDone(label);
+      await pollUntilDone(label, i === 0);
       markStage(i, "done");
       setBar(100);
     }
