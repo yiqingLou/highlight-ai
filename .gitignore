@@ -56,3 +56,6 @@ backend/venv/
 assets/bgm/) 
 assets/
 backend/thumbnails/
+backend/dist/
+backend/build/
+backend/uploads/
