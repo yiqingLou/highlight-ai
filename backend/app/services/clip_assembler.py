@@ -596,3 +596,31 @@ def add_bgm(
 
     if result.returncode != 0:
         raise VideoProbeError(f"ffmpeg failed finalizing montage: {result.stderr}")
+
+
+def export_vertical(input_path: str, output_path: str) -> None:
+    """Re-frame a landscape montage into 1080x1920 for TikTok/Shorts.
+
+    The source is centered at full width; the gaps above and below are
+    filled with a blurred, zoomed copy of the same frame so nothing is
+    cropped away and the result never shows black bars.
+    """
+    filter_complex = (
+        "[0:v]split=2[bg][fg];"
+        "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,gblur=sigma=28[bgblur];"
+        "[fg]scale=1080:-2[fgs];"
+        "[bgblur][fgs]overlay=(W-w)/2:(H-h)/2"
+    )
+    cmd = [
+        "ffmpeg", "-nostdin", "-y",
+        "-i", input_path,
+        "-filter_complex", filter_complex,
+        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise VideoProbeError(f"Vertical export failed: {result.stderr[-500:]}")

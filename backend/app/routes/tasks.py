@@ -41,6 +41,7 @@ from app.services.clip_assembler import (
     concat_clips_with_transitions,
     make_title_card,
     add_bgm,
+    export_vertical,
 )
 from app.services.viral_score import compute_viral_score_from_meta
 from app.game_profiles.base import get_profile
@@ -1181,4 +1182,76 @@ def get_task_progress(task_id: int, db: Session = Depends(get_db)):
             "percent": percent,
         },
         "error_message": task.error_message,
+    }
+
+
+def _run_vertical_export_in_background(task_id: int) -> None:
+    """Background worker: export montage_final.mp4 to a 9:16 vertical cut."""
+    db = SessionLocal()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task is None:
+            return
+
+        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        clips_dir = BACKEND_DIR / "clips" / str(task_id)
+        input_path = clips_dir / "montage_final.mp4"
+        output_path = clips_dir / "montage_vertical.mp4"
+
+        if not input_path.exists():
+            update_task_status(
+                db, task, status="failed",
+                error_message="No montage to export. Build montage first.",
+            )
+            return
+
+        update_task_status(db, task, status="processing", progress=40)
+        try:
+            export_vertical(str(input_path), str(output_path))
+        except (FileNotFoundError, VideoProbeError) as e:
+            update_task_status(
+                db, task, status="failed",
+                error_message=f"Vertical export failed: {e}",
+            )
+            return
+
+        update_task_status(db, task, status="done", progress=100)
+    finally:
+        db.close()
+
+
+@router.post("/{task_id}/vertical", status_code=202)
+def export_task_vertical(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Export an existing montage as 9:16 vertical video in background."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    clips_dir = BACKEND_DIR / "clips" / str(task_id)
+    montage_path = clips_dir / "montage_final.mp4"
+    if not montage_path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task {task_id} has no montage_final.mp4. Build montage first.",
+        )
+
+    if task.status == "processing":
+        raise HTTPException(
+            status_code=409,
+            detail="Task is already processing; wait for the current stage to finish",
+        )
+
+    update_task_status(db, task, status="processing", progress=0)
+    background_tasks.add_task(_run_vertical_export_in_background, task_id)
+
+    return {
+        "task_id": task_id,
+        "status": "exporting_vertical",
+        "message": "Exporting 9:16 vertical cut in background.",
+        "output": f"clips/{task_id}/montage_vertical.mp4",
     }

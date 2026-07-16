@@ -356,6 +356,7 @@
         <label>Your highlight reel</label>
         <video id="player-video" controls></video>
         <a class="download" id="dl" download>Download montage_final.mp4</a>
+        <button id="vertical">Export vertical (9:16) for TikTok / Shorts</button>
       </div>
 
       <div class="panel" id="clipStrip">
@@ -786,6 +787,22 @@
         stageMsg(`BGM upload failed: ${e.message}`);
       } finally {
         $("bgmFile").value = "";
+      }
+    });
+
+    $("vertical").addEventListener("click", async () => {
+      $("vertical").disabled = true;
+      try {
+        await runStage(2, "Exporting vertical cut", () =>
+          fetch(`/api/tasks/${taskId}/vertical`, { method: "POST" }));
+        const url = `/clips/${taskId}/montage_vertical.mp4`;
+        $("player-video").src = url;
+        $("dl").href = url;
+        stageMsg("Vertical cut ready \u2014 playing it now.");
+      } catch (e) {
+        stageMsg(`Error: ${e.message}`);
+      } finally {
+        $("vertical").disabled = false;
       }
     });
   </script>
