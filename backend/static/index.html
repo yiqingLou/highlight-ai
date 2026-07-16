@@ -222,6 +222,12 @@
     .clip-thumb .cname { flex: 1; font-size: 0.74em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .clip-thumb .cdl { color: var(--faint); text-decoration: none; font-size: 1.05em; }
     .clip-thumb .cdl:hover { color: var(--gold); }
+    .clip-thumb { position: relative; }
+    .clip-thumb .csel {
+      position: absolute; top: 8px; left: 8px; z-index: 2;
+      width: 18px; height: 18px; accent-color: var(--gold); cursor: pointer;
+    }
+    .clip-thumb:has(.csel:not(:checked)) { opacity: 0.4; }
 
     /* ---- Library ---- */
     .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
@@ -355,6 +361,7 @@
       <div class="panel" id="clipStrip">
         <label>Individual clips</label>
         <div class="strip" id="stripInner"></div>
+        <button id="rebuild">Rebuild montage with selected clips</button>
       </div>
     </section>
 
@@ -450,11 +457,14 @@
           if (!fname) continue;
           const div = document.createElement("div");
           div.className = "clip-thumb";
+          div.dataset.clipid = c.id;
           div.innerHTML =
+            `<input type="checkbox" class="csel" checked title="Include in montage" />` +
             `<video src="/clips/${id}/${fname}#t=1" muted preload="metadata"></video>` +
             `<div class="crow"><div class="cname">${fname}</div>` +
             `<a class="cdl" href="/clips/${id}/${fname}" download title="Download clip">&#10515;</a></div>`;
           div.querySelector(".cdl").addEventListener("click", (e) => e.stopPropagation());
+          div.querySelector(".csel").addEventListener("click", (e) => e.stopPropagation());
           div.addEventListener("click", () => {
             $("player-video").src = `/clips/${id}/${fname}`;
             $("result").style.display = "block";
@@ -623,6 +633,26 @@
         stageMsg(`Error: ${e.message}`);
       } finally {
         $("start").disabled = false;
+      }
+    });
+
+    $("rebuild").addEventListener("click", async () => {
+      const ids = [...document.querySelectorAll("#stripInner .csel:checked")]
+        .map((cb) => cb.closest(".clip-thumb").dataset.clipid);
+      if (!ids.length) { stageMsg("Select at least one clip."); return; }
+      $("rebuild").disabled = true;
+      try {
+        const bgm = encodeURIComponent($("bgmSel").value);
+        const pn = encodeURIComponent($("player").value.trim());
+        await runStage(2, `Rebuilding montage (${ids.length} clips)`, () =>
+          fetch(`/api/tasks/${taskId}/montage?bgm=${bgm}&captions=${$("opt-captions").checked}&transitions=${$("opt-transitions").checked}&intro_outro=${$("opt-intro").checked}&player_name=${pn}&clip_ids=${ids.join(",")}`,
+                { method: "POST" }));
+        stageMsg("Montage rebuilt with your selection!");
+        showMontage(taskId);
+      } catch (e) {
+        stageMsg(`Error: ${e.message}`);
+      } finally {
+        $("rebuild").disabled = false;
       }
     });
 

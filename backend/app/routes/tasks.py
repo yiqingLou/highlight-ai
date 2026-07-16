@@ -317,6 +317,7 @@ def _run_montage_in_background(
     transitions: bool = True,
     intro_outro: bool = True,
     player_name: str = "",
+    clip_ids: str = "",
 ) -> None:
     """
     Background worker: stitch a task's clips into one montage, mix BGM, and
@@ -345,6 +346,16 @@ def _run_montage_in_background(
 
         # --- Step 1: collect clip files in name order ---
         clip_files = sorted(clips_dir.glob("clip_*.mp4"))
+        # Optional user selection: keep only the chosen clips (Clip DB ids).
+        if clip_ids:
+            try:
+                wanted = {int(x) for x in clip_ids.split(",") if x.strip()}
+            except ValueError:
+                wanted = set()
+            if wanted:
+                rows = db.query(Clip).filter(Clip.id.in_(wanted)).all()
+                keep = {Path(r.output_path).name for r in rows}
+                clip_files = [p for p in clip_files if p.name in keep]
         if not clip_files:
             update_task_status(
                 db, task, status=task.status,
@@ -972,6 +983,7 @@ def generate_task_montage(
     transitions: bool = True,
     intro_outro: bool = True,
     player_name: str = "",
+    clip_ids: str = "",
     db: Session = Depends(get_db),
 ):
     """
@@ -1008,7 +1020,7 @@ def generate_task_montage(
         )
     update_task_status(db, task, status="processing", progress=0)
     background_tasks.add_task(
-        _run_montage_in_background, task_id, bgm_clean, captions, transitions, intro_outro, player_name
+        _run_montage_in_background, task_id, bgm_clean, captions, transitions, intro_outro, player_name, clip_ids
     )
 
     return {
