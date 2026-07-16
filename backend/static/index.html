@@ -357,6 +357,7 @@
         <video id="player-video" controls></video>
         <a class="download" id="dl" download>Download montage_final.mp4</a>
         <button id="vertical">Export vertical (9:16) for TikTok / Shorts</button>
+        <a class="download" id="dlv" download style="display:none">Download montage_vertical.mp4</a>
       </div>
 
       <div class="panel" id="clipStrip">
@@ -576,6 +577,9 @@
       [0, 1, 2].forEach((i) => markStage(i, null));
       $("result").style.display = "none";
       $("clipStrip").style.display = "none";
+      $("dlv").style.display = "none";
+      failedStage = null;
+      $("start").textContent = "Start Processing";
     }
 
     async function pollUntilDone(label, useFrames) {
@@ -608,18 +612,24 @@
       setBar(100);
     }
 
-    $("start").addEventListener("click", async () => {
+    let failedStage = null;
+    const STAGE_NAMES = ["Detect", "Clips", "Montage"];
+
+    async function runPipeline(from = 0) {
       $("start").disabled = true;
       $("result").style.display = "none";
+      // Stages we're skipping on a retry stay marked as done.
+      for (let i = 0; i < from; i++) markStage(i, "done");
       try {
-        await runStage(0, "Detecting kills", () =>
-          fetch(`/api/tasks/${taskId}/extract-frames?fps=1`, { method: "POST" }));
-
-        await runStage(1, "Cutting clips", () =>
-          fetch(`/api/tasks/${taskId}/generate-clips?slowmo=${$("opt-slowmo").checked}`, { method: "POST" }));
-
-        fetch(`/api/tasks/${taskId}/thumbnails`, { method: "POST" }).catch(() => {});
-
+        if (from <= 0) {
+          await runStage(0, "Detecting kills", () =>
+            fetch(`/api/tasks/${taskId}/extract-frames?fps=1`, { method: "POST" }));
+        }
+        if (from <= 1) {
+          await runStage(1, "Cutting clips", () =>
+            fetch(`/api/tasks/${taskId}/generate-clips?slowmo=${$("opt-slowmo").checked}`, { method: "POST" }));
+          fetch(`/api/tasks/${taskId}/thumbnails`, { method: "POST" }).catch(() => {});
+        }
         const bgm = encodeURIComponent($("bgmSel").value);
         const pn = encodeURIComponent($("player").value.trim());
         await runStage(2, "Building montage", () =>
@@ -627,15 +637,22 @@
                 { method: "POST" }));
 
         stageMsg("All done!");
+        failedStage = null;
+        $("start").textContent = "Start Processing";
         showMontage(taskId);
         loadTaskInfo(taskId);
         loadClips(taskId);
       } catch (e) {
+        failedStage = [0, 1, 2].find((i) => $(`st${i}`).classList.contains("active")) ?? 0;
+        markStage(failedStage, null);
         stageMsg(`Error: ${e.message}`);
+        $("start").textContent = `Retry from ${STAGE_NAMES[failedStage]}`;
       } finally {
         $("start").disabled = false;
       }
-    });
+    }
+
+    $("start").addEventListener("click", () => runPipeline(failedStage ?? 0));
 
     $("rebuild").addEventListener("click", async () => {
       const ids = [...document.querySelectorAll("#stripInner .csel:checked")]
@@ -662,6 +679,11 @@
       $("player-video").src = url;
       $("dl").href = url;
       $("result").style.display = "block";
+      // Surface an existing vertical cut if this task already has one.
+      const vurl = `/clips/${id}/montage_vertical.mp4`;
+      fetch(vurl, { method: "HEAD" }).then((h) => {
+        if (h.ok) { $("dlv").href = vurl; $("dlv").style.display = "block"; }
+      }).catch(() => {});
     }
 
     // ---- Library ----
@@ -768,7 +790,36 @@
         else if (tracks.length) sel.selectedIndex = 1;
       } catch { /* dropdown stays as-is */ }
     }
-    loadBgmList();
+
+    // ---- Preference persistence (survives restarts) ----
+    const PREF_KEY = "hlai_prefs";
+    function savePrefs() {
+      const p = {
+        slowmo: $("opt-slowmo").checked,
+        transitions: $("opt-transitions").checked,
+        captions: $("opt-captions").checked,
+        intro: $("opt-intro").checked,
+        bgm: $("bgmSel").value,
+        player: $("player").value,
+      };
+      try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch {}
+    }
+    function restorePrefs() {
+      try {
+        const p = JSON.parse(localStorage.getItem(PREF_KEY) || "{}");
+        if ("slowmo" in p) $("opt-slowmo").checked = p.slowmo;
+        if ("transitions" in p) $("opt-transitions").checked = p.transitions;
+        if ("captions" in p) $("opt-captions").checked = p.captions;
+        if ("intro" in p) $("opt-intro").checked = p.intro;
+        if (p.player) $("player").value = p.player;
+        window._prefBgm = p.bgm || "";
+      } catch {}
+    }
+    ["opt-slowmo", "opt-transitions", "opt-captions", "opt-intro", "player", "bgmSel"]
+      .forEach((id) => $(id).addEventListener("change", savePrefs));
+
+    restorePrefs();
+    loadBgmList(window._prefBgm);
 
     $("bgmUp").addEventListener("click", () => $("bgmFile").click());
     $("bgmFile").addEventListener("change", async () => {
@@ -797,7 +848,8 @@
           fetch(`/api/tasks/${taskId}/vertical`, { method: "POST" }));
         const url = `/clips/${taskId}/montage_vertical.mp4`;
         $("player-video").src = url;
-        $("dl").href = url;
+        $("dlv").href = url;
+        $("dlv").style.display = "block";
         stageMsg("Vertical cut ready \u2014 playing it now.");
       } catch (e) {
         stageMsg(`Error: ${e.message}`);
