@@ -2,7 +2,6 @@
 BGM routes - /api/bgm
 """
 
-from pathlib import Path
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -11,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Bgm
 from app.schemas.bgm import BgmListResponse
+from app.paths import ASSETS_DIR
 
 router = APIRouter()
 
@@ -28,8 +28,7 @@ def get_bgm(db: Session = Depends(get_db)):
 @router.get("/list")
 def list_bgm_files():
     """List available BGM tracks under assets/bgm (name + resolved path)."""
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
-    bgm_dir = project_root / "assets" / "bgm"
+    bgm_dir = ASSETS_DIR / "bgm"
     tracks = []
     if bgm_dir.is_dir():
         for f in sorted(bgm_dir.glob("*.mp3")):
@@ -43,8 +42,7 @@ async def upload_bgm(file: UploadFile):
     if not file.filename or not file.filename.lower().endswith(".mp3"):
         raise HTTPException(status_code=400, detail="Only .mp3 files are supported")
 
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
-    bgm_dir = project_root / "assets" / "bgm"
+    bgm_dir = ASSETS_DIR / "bgm"
     bgm_dir.mkdir(parents=True, exist_ok=True)
 
     dest = bgm_dir / file.filename

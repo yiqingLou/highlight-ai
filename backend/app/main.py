@@ -11,13 +11,12 @@ All endpoints organized into routers under app/routes/:
   /api/stats         (routes/stats.py)
 """
 
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 # All endpoint routers
+from app.paths import CLIPS_DIR, STATIC_DIR
 from app.routes import highlights as highlights_routes
 from app.routes import tasks as tasks_routes
 from app.routes import bgm as bgm_routes
@@ -59,8 +58,6 @@ app.include_router(stats_routes.router, prefix="/api/stats", tags=["stats"])
 # ============================================
 # Frontend (static single-page app)
 # ============================================
-CLIPS_DIR = Path(__file__).resolve().parent.parent / "clips"
 app.mount("/clips", StaticFiles(directory=str(CLIPS_DIR)), name="clips")
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

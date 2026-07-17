@@ -15,9 +15,8 @@ task pipeline maps to a score, so multi-kills outrank single kills.
 Model: ml/models/naraka_kill.pt  (single class "kill")
 """
 
-from pathlib import Path
-
 from .base import GameProfile, DetectedHighlight
+from app.paths import MODELS_DIR
 
 # --- Detection tuning -----------------------------------------------------
 # Minimum confidence for a YOLO detection to count as a real kill. At 0.55,
@@ -58,9 +57,7 @@ _PENTA_KIND = "penta_kill"  # 5 or more
 # Path to the trained weights, relative to the project root.
 # This file lives at backend/app/game_profiles/naraka.py, so go up three
 # levels to reach the project root, then into ml/models.
-_MODEL_PATH = (
-    Path(__file__).resolve().parents[3] / "ml" / "models" / "naraka_kill.pt"
-)
+_MODEL_PATH = MODELS_DIR / "naraka_kill.pt"
 
 
 class NarakaProfile(GameProfile):

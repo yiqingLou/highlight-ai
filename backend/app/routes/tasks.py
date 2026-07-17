@@ -24,6 +24,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFi
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
+from app.paths import DATA_DIR
 from app.models import Task, Highlight, Clip
 from app.schemas.task import TaskListResponse, TaskDetailResponse, TaskCreate
 from app.services.video_processor import (
@@ -124,7 +125,7 @@ def _run_frame_extraction_in_background(task_id: int, fps: int) -> None:
         if task is None:
             return
 
-        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        BACKEND_DIR = DATA_DIR
         frames_dir = BACKEND_DIR / "frames" / str(task_id)
 
         # --- Step 0: clear old frames so re-runs start clean ---
@@ -231,7 +232,7 @@ def _run_clip_generation_in_background(task_id: int, slowmo: bool = True) -> Non
         if task is None:
             return
 
-        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        BACKEND_DIR = DATA_DIR
         clips_dir = BACKEND_DIR / "clips" / str(task_id)
 
         # --- Step 0: clear old clips (DB rows + files) for clean re-runs ---
@@ -342,7 +343,7 @@ def _run_montage_in_background(
         if task is None:
             return
 
-        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        BACKEND_DIR = DATA_DIR
         clips_dir = BACKEND_DIR / "clips" / str(task_id)
 
         # --- Step 1: collect clip files in name order ---
@@ -609,7 +610,7 @@ def _run_thumbnail_generation_in_background(task_id: int) -> None:
         if task is None:
             return
 
-        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        BACKEND_DIR = DATA_DIR
         thumbs_dir = BACKEND_DIR / "thumbnails" / str(task_id)
         thumbs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -755,7 +756,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    BACKEND_DIR = DATA_DIR
     for d in (
         BACKEND_DIR / "frames" / str(task_id),
         BACKEND_DIR / "clips" / str(task_id),
@@ -792,7 +793,7 @@ async def upload_task_video(file: UploadFile, db: Session = Depends(get_db)):
     if not file.filename or not file.filename.lower().endswith(".mp4"):
         raise HTTPException(status_code=400, detail="Only .mp4 files are supported")
 
-    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    BACKEND_DIR = DATA_DIR
     uploads_dir = BACKEND_DIR / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1002,7 +1003,7 @@ def generate_task_montage(
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    BACKEND_DIR = DATA_DIR
     clips_dir = BACKEND_DIR / "clips" / str(task_id)
     clip_count = len(list(clips_dir.glob("clip_*.mp4"))) if clips_dir.exists() else 0
     if clip_count == 0:
@@ -1073,7 +1074,7 @@ def get_task_frames(task_id: int, db: Session = Depends(get_db)):
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    BACKEND_DIR = DATA_DIR
     frames_dir = BACKEND_DIR / "frames" / str(task_id)
 
     if not frames_dir.exists():
@@ -1138,7 +1139,7 @@ def get_task_progress(task_id: int, db: Session = Depends(get_db)):
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    BACKEND_DIR = DATA_DIR
     frames_dir = BACKEND_DIR / "frames" / str(task_id)
 
     if frames_dir.exists():
@@ -1193,7 +1194,7 @@ def _run_vertical_export_in_background(task_id: int) -> None:
         if task is None:
             return
 
-        BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+        BACKEND_DIR = DATA_DIR
         clips_dir = BACKEND_DIR / "clips" / str(task_id)
         input_path = clips_dir / "montage_final.mp4"
         output_path = clips_dir / "montage_vertical.mp4"
@@ -1231,7 +1232,7 @@ def export_task_vertical(
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+    BACKEND_DIR = DATA_DIR
     clips_dir = BACKEND_DIR / "clips" / str(task_id)
     montage_path = clips_dir / "montage_final.mp4"
     if not montage_path.exists():

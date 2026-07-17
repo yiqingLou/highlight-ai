@@ -7,14 +7,15 @@ This module defines:
 - The Base class (all ORM models inherit from this)
 """
 
-from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+
+from app.paths import DATA_DIR
 
 
 # Database file location
 # Stored in backend/highlight_ai.db (gitignored)
-BACKEND_DIR = Path(__file__).resolve().parent.parent
+BACKEND_DIR = DATA_DIR
 DB_PATH = BACKEND_DIR / "highlight_ai.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
