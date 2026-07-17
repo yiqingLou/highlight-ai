@@ -33,6 +33,10 @@ FRAMES_DIR = DATA_DIR / "frames"
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 UPLOADS_DIR = DATA_DIR / "uploads"
 
+# User-uploaded BGM must live in writable space, not the bundled assets dir.
+USER_BGM_DIR = DATA_DIR / "bgm"
+USER_BGM_DIR.mkdir(parents=True, exist_ok=True)
+
 # Runtime dirs must exist before any mount or worker touches them.
 for _d in (CLIPS_DIR, FRAMES_DIR, THUMBNAILS_DIR, UPLOADS_DIR):
     _d.mkdir(parents=True, exist_ok=True)

@@ -15,14 +15,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# All endpoint routers
 from app.paths import CLIPS_DIR, STATIC_DIR
+from app.database import Base, engine
+from app import models  # noqa: F401 - import so every model registers on Base
+
+# All endpoint routers
 from app.routes import highlights as highlights_routes
 from app.routes import tasks as tasks_routes
 from app.routes import bgm as bgm_routes
 from app.routes import settings as settings_routes
 from app.routes import stats as stats_routes
-
 
 app = FastAPI(
     title="highlight-ai API",
@@ -39,6 +41,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================
+# Create tables if they don't exist yet
+# ============================================
+# A packaged build starts with an empty data/ dir next to the exe, so its DB
+# file has no tables at all. create_all is a no-op once they exist, so this is
+# safe to run on every startup.
+Base.metadata.create_all(bind=engine)
 
 # ============================================
 # Include all routers
@@ -49,15 +58,8 @@ app.include_router(bgm_routes.router, prefix="/api/bgm", tags=["bgm"])
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["settings"])
 app.include_router(stats_routes.router, prefix="/api/stats", tags=["stats"])
 
-
-# ============================================
-# Health check
-# ============================================
-
-
 # ============================================
 # Frontend (static single-page app)
 # ============================================
 app.mount("/clips", StaticFiles(directory=str(CLIPS_DIR)), name="clips")
-
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
