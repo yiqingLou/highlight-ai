@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from app.paths import FFMPEG_EXE, FFPROBE_EXE
 from app.services.video_processor import VideoProbeError
 
 
@@ -57,7 +58,7 @@ def cut_clip(
     # decoding everything before it. -t (duration) stays after -i so it counts
     # from the sought position.
     cmd = [
-        "ffmpeg",
+        FFMPEG_EXE,
         "-ss", str(start_sec),   # fast input seek (before -i)
         "-i", str(src),
         "-t", str(duration),
@@ -93,7 +94,7 @@ def _probe_duration(path: str) -> float:
     """Return the duration of a media file in seconds using ffprobe."""
     probe = subprocess.run(
         [
-            "ffprobe", "-v", "error",
+            FFPROBE_EXE, "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             str(path),
@@ -148,7 +149,7 @@ def concat_clips(
             f.write(f"file '{safe}'\n")
 
     cmd = [
-        "ffmpeg",
+        FFMPEG_EXE,
         "-nostdin",
         "-f", "concat",
         "-safe", "0",           # allow absolute paths in the list file
@@ -204,7 +205,7 @@ def concat_clips_with_transitions(
     if len(clip_paths) == 1:
         # Single clip: nothing to transition, just copy.
         result = subprocess.run(
-            ["ffmpeg", "-nostdin", "-i", clip_paths[0],
+            [FFMPEG_EXE, "-nostdin", "-i", clip_paths[0],
              "-c", "copy", "-loglevel", "error", "-y", str(out)],
             capture_output=True,
             text=True,
@@ -250,7 +251,7 @@ def concat_clips_with_transitions(
     audio_out = prev_a
 
     cmd = (
-        ["ffmpeg", "-nostdin"] + inputs
+        [FFMPEG_EXE, "-nostdin"] + inputs
         + ["-filter_complex", ";".join(filter_parts),
            "-map", video_out, "-map", audio_out,
            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
@@ -327,7 +328,7 @@ def make_title_card(
 
     if bg_image:
         cmd = [
-            "ffmpeg", "-nostdin",
+            FFMPEG_EXE, "-nostdin",
             "-loop", "1", "-t", str(duration), "-i", bg_image,
             "-f", "lavfi", "-t", str(duration),
             "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
@@ -340,7 +341,7 @@ def make_title_card(
     else:
         # Solid black background source.
         cmd = [
-            "ffmpeg", "-nostdin",
+            FFMPEG_EXE, "-nostdin",
             "-f", "lavfi", "-i",
             f"color=c=black:s={width}x{height}:r={fps}:d={duration}",
             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
@@ -434,7 +435,7 @@ def apply_kill_slowmo(
     inputs = ["-i", clip_path]
     if sfx_path:
         inputs += ["-i", sfx_path]
-    cmd = ["ffmpeg", "-nostdin"] + inputs + [
+    cmd = [FFMPEG_EXE, "-nostdin"] + inputs + [
         "-filter_complex", fc,
         "-map", "[outv]", "-map", "[outa]",
         "-r", str(fps), "-pix_fmt", "yuv420p",
@@ -494,7 +495,7 @@ def add_bgm(
     # Fast path: nothing to do but copy.
     if not use_bgm and not use_captions:
         cmd = [
-            "ffmpeg", "-nostdin",
+            FFMPEG_EXE, "-nostdin",
             "-i", str(src),
             "-c", "copy",
             "-loglevel", "error",
@@ -506,7 +507,7 @@ def add_bgm(
             raise VideoProbeError(f"ffmpeg failed copying montage: {result.stderr}")
         return
 
-    cmd = ["ffmpeg", "-nostdin", "-i", str(src)]
+    cmd = [FFMPEG_EXE, "-nostdin", "-i", str(src)]
     if use_bgm:
         cmd += ["-stream_loop", "-1", "-i", str(bgm_path)]
 
@@ -613,7 +614,7 @@ def export_vertical(input_path: str, output_path: str) -> None:
         "[bgblur][fgs]overlay=(W-w)/2:(H-h)/2"
     )
     cmd = [
-        "ffmpeg", "-nostdin", "-y",
+        FFMPEG_EXE, "-nostdin", "-y",
         "-i", input_path,
         "-filter_complex", filter_complex,
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",

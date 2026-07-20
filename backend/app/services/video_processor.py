@@ -12,6 +12,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from app.paths import FFMPEG_EXE, FFPROBE_EXE
+
 
 class VideoProbeError(Exception):
     """Raised when ffprobe / ffmpeg fails to process a video file."""
@@ -47,7 +49,7 @@ def extract_video_metadata(file_path: str) -> dict:
 
     # 2. Build ffprobe command
     cmd = [
-        "ffprobe",
+        FFPROBE_EXE,
         "-v", "quiet",
         "-print_format", "json",
         "-show_format",
@@ -155,7 +157,7 @@ def extract_frames(
     # Pattern frame_%04d.jpg generates frame_0001.jpg, frame_0002.jpg, etc.
     output_pattern = str(out_dir / "frame_%04d.jpg")
     cmd = [
-        "ffmpeg",
+        FFMPEG_EXE,
         "-i", str(src),
         "-vf", f"fps={fps}",
         "-q:v", "2",            # JPG quality (1=best, 31=worst), 2 = high quality
@@ -283,7 +285,7 @@ def extract_thumbnail(
     vf = ",".join(filters)
 
     cmd = [
-        "ffmpeg",
+        FFMPEG_EXE,
         "-nostdin",
         "-ss", str(max(0.0, time_sec)),
         "-i", str(src),

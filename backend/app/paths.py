@@ -28,6 +28,26 @@ else:
     ASSETS_DIR = _ROOT / "assets"
     MODELS_DIR = _ROOT / "ml" / "models"
 
+
+def _resolve_tool_exe(tool_name: str) -> str:
+    """Resolve tool executable path in frozen/dev; fallback to PATH."""
+    exe = f"{tool_name}.exe" if sys.platform.startswith("win") else tool_name
+    candidates = [
+        Path(sys.executable).parent / exe,
+        Path(sys.executable).parent / "_internal" / exe,
+        Path(sys.executable).parent / "_internal" / "bin" / exe,
+        Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent / "_internal")) / exe,
+        Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent / "_internal")) / "bin" / exe,
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return exe
+
+
+FFMPEG_EXE = _resolve_tool_exe("ffmpeg") if FROZEN else "ffmpeg"
+FFPROBE_EXE = _resolve_tool_exe("ffprobe") if FROZEN else "ffprobe"
+
 CLIPS_DIR = DATA_DIR / "clips"
 FRAMES_DIR = DATA_DIR / "frames"
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"

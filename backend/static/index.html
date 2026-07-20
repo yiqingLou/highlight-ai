@@ -675,7 +675,7 @@
     });
 
     function showMontage(id) {
-      const url = `/clips/${id}/montage_final.mp4`;
+      const url = `/clips/${id}/montage_final.mp4?t=${Date.now()}`;
       $("player-video").src = url;
       $("dl").href = url;
       $("result").style.display = "block";
