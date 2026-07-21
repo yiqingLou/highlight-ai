@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('static', 'static'), ('..\\assets', 'assets'), ('..\\ml\\models', 'ml/models')]
+datas = [('static', 'static'), ('bin', 'bin'), ('..\\assets', 'assets'), ('..\\ml\\models', 'ml/models')]
 binaries = []
 hiddenimports = ['uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.lifespan.on']
 datas += collect_data_files('ultralytics')
