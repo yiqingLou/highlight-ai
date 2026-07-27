@@ -60,3 +60,4 @@ backend/dist/
 backend/build/
 backend/uploads/
 backend/bin/
+batch_scan_work/
