@@ -34,6 +34,7 @@ def _resolve_tool_exe(tool_name: str) -> str:
     exe = f"{tool_name}.exe" if sys.platform.startswith("win") else tool_name
     candidates = [
         Path(sys.executable).parent / exe,
+        
         Path(sys.executable).parent / "_internal" / exe,
         Path(sys.executable).parent / "_internal" / "bin" / exe,
         Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent / "_internal")) / exe,
@@ -60,3 +61,7 @@ USER_BGM_DIR.mkdir(parents=True, exist_ok=True)
 # Runtime dirs must exist before any mount or worker touches them.
 for _d in (CLIPS_DIR, FRAMES_DIR, THUMBNAILS_DIR, UPLOADS_DIR):
     _d.mkdir(parents=True, exist_ok=True)
+
+# Extraction sampling rate for the detection pipeline. 2fps closes the
+# sampling-gap miss class (match5's 11th kill was invisible at 1fps).
+EXTRACTION_FPS = 2

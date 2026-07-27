@@ -12,6 +12,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from app.encoding import NVENC
 from app.paths import FFMPEG_EXE, FFPROBE_EXE
 
 
@@ -158,6 +159,7 @@ def extract_frames(
     output_pattern = str(out_dir / "frame_%04d.jpg")
     cmd = [
         FFMPEG_EXE,
+        *(["-hwaccel", "cuda"] if NVENC else []),
         "-i", str(src),
         "-vf", f"fps={fps}",
         "-q:v", "2",            # JPG quality (1=best, 31=worst), 2 = high quality

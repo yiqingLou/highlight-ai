@@ -24,7 +24,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFi
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal, get_db
-from app.paths import DATA_DIR
+from app.paths import DATA_DIR, EXTRACTION_FPS
 from app.models import Task, Highlight, Clip
 from app.schemas.task import TaskListResponse, TaskDetailResponse, TaskCreate
 from app.services.video_processor import (
@@ -241,14 +241,13 @@ def _run_clip_generation_in_background(task_id: int, slowmo: bool = True) -> Non
         _clear_clips_dir(clips_dir)
         clips_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- Step 1: load the top-N highlights by ViralScore, best first ---
-        # No score gate: ranking by ViralScore + a top-N cap naturally keeps
-        # the most exciting clips (multi-kills first, strong singles backfill).
+        # --- Step 1: load ALL highlights, chronological ---
+        # Every detected kill becomes a clip; the user prunes via the clip
+        # selection UI before rebuilding the montage.
         highlights = (
             db.query(Highlight)
             .filter(Highlight.task_id == task_id)
-            .order_by(Highlight.score.desc())
-            .limit(MONTAGE_TOP_N)
+            .order_by(Highlight.start_sec)
             .all()
         )
 
@@ -904,7 +903,7 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
 def extract_task_frames(
     task_id: int,
     background_tasks: BackgroundTasks,
-    fps: int = 1,
+    fps: int = EXTRACTION_FPS,
     db: Session = Depends(get_db),
 ):
     """Trigger frame extraction in the background. Returns 202 Accepted."""
@@ -1149,7 +1148,7 @@ def get_task_progress(task_id: int, db: Session = Depends(get_db)):
 
     expected_total = 0
     if task.duration_sec:
-        expected_total = int(task.duration_sec * 1)
+        expected_total = int(task.duration_sec * EXTRACTION_FPS)
 
     if task.status == "done":
         percent = 100

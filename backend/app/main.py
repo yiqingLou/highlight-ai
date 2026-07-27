@@ -49,6 +49,18 @@ app.add_middleware(
 # safe to run on every startup.
 Base.metadata.create_all(bind=engine)
 
+# Workers never survive a restart: any task still marked "processing" at
+# startup is a zombie left by a kill/crash. Mark it failed so the UI can
+# offer a retry instead of dead-locking behind the concurrency guard.
+from app.database import SessionLocal as _SL
+_db = _SL()
+_stale = _db.query(models.Task).filter(models.Task.status == "processing").all()
+for _t in _stale:
+  _t.status = "failed"
+  _t.error_message = "Interrupted by an app restart; retry from the last stage."
+_db.commit()
+_db.close()
+
 # ============================================
 # Include all routers
 # ============================================

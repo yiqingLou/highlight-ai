@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from app.encoding import video_codec_args, NVENC
 from app.paths import FFMPEG_EXE, FFPROBE_EXE
 from app.services.video_processor import VideoProbeError
 
@@ -59,12 +60,12 @@ def cut_clip(
     # from the sought position.
     cmd = [
         FFMPEG_EXE,
+        *(["-hwaccel", "cuda"] if NVENC else []),
         "-ss", str(start_sec),   # fast input seek (before -i)
         "-i", str(src),
         "-t", str(duration),
-        "-c:v", "libx264",
+        *video_codec_args(23, "veryfast"),
         "-c:a", "aac",
-        "-preset", "veryfast",   # quicker encode for 2560x1600 clips
         "-loglevel", "error",
         "-y",                    # overwrite if exists
         str(out),
@@ -254,7 +255,7 @@ def concat_clips_with_transitions(
         [FFMPEG_EXE, "-nostdin"] + inputs
         + ["-filter_complex", ";".join(filter_parts),
            "-map", video_out, "-map", audio_out,
-           "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+           *video_codec_args(18, "fast"),
            "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k",
            "-loglevel", "error", "-y", str(out)]
@@ -334,7 +335,7 @@ def make_title_card(
             "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
             "-vf", vf,
             "-r", str(fps), "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            *video_codec_args(18, "fast"),
             "-c:a", "aac", "-b:a", "192k",
             "-loglevel", "error", "-y", output_path,
         ]
@@ -347,7 +348,7 @@ def make_title_card(
             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
             "-vf", vf, "-t", str(duration),
             "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            *video_codec_args(18, "fast"),
             "-shortest", "-c:a", "aac", "-b:a", "192k",
             "-loglevel", "error", "-y", output_path,
         ]
@@ -439,7 +440,7 @@ def apply_kill_slowmo(
         "-filter_complex", fc,
         "-map", "[outv]", "-map", "[outa]",
         "-r", str(fps), "-pix_fmt", "yuv420p",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        *video_codec_args(18, "fast"),
         "-c:a", "aac", "-b:a", "192k",
         "-loglevel", "error", "-y", output_path,
     ]
@@ -578,7 +579,7 @@ def add_bgm(
 
     # Video codec: re-encode if we drew captions, else copy.
     if use_captions:
-        cmd += ["-c:v", "libx264", "-preset", "veryfast"]
+        cmd += video_codec_args(23, "veryfast")
     else:
         cmd += ["-c:v", "copy"]
 
@@ -617,7 +618,7 @@ def export_vertical(input_path: str, output_path: str) -> None:
         FFMPEG_EXE, "-nostdin", "-y",
         "-i", input_path,
         "-filter_complex", filter_complex,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+        *video_codec_args(20, "medium"),
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         output_path,

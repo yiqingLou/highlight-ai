@@ -623,7 +623,7 @@
       try {
         if (from <= 0) {
           await runStage(0, "Detecting kills", () =>
-            fetch(`/api/tasks/${taskId}/extract-frames?fps=1`, { method: "POST" }));
+            fetch(`/api/tasks/${taskId}/extract-frames`, { method: "POST" }));
         }
         if (from <= 1) {
           await runStage(1, "Cutting clips", () =>
@@ -759,16 +759,38 @@
     async function adoptTask(id) {
       resetPipelineUI();
       showPipeline(id);
-      const url = `/clips/${id}/montage_final.mp4`;
+
+      // Figure out how far this task got and offer to continue from there.
+      let clipCount = 0;
       try {
-        const head = await fetch(url, { method: "HEAD" });
-        if (head.ok) {
-          showMontage(id);
-          stageMsg("Previously rendered montage loaded.");
-        } else {
-          stageMsg("No montage rendered yet \u2014 press Start Processing.");
-        }
-      } catch {
+        const r = await fetch(`/api/tasks/${id}/clips`);
+        if (r.ok) clipCount = (await r.json()).clip_count || 0;
+      } catch { /* treat as none */ }
+
+      let hasHighlights = false;
+      try {
+        const r = await fetch(`/api/tasks/${id}`);
+        if (r.ok) hasHighlights = ((await r.json()).highlight_count || 0) > 0;
+      } catch { /* treat as none */ }
+
+      let hasMontage = false;
+      try {
+        const head = await fetch(`/clips/${id}/montage_final.mp4`, { method: "HEAD" });
+        hasMontage = head.ok;
+      } catch { /* treat as none */ }
+
+      if (hasMontage) {
+        showMontage(id);
+        stageMsg("Previously rendered montage loaded.");
+      } else if (clipCount > 0) {
+        failedStage = 2;
+        $("start").textContent = "Continue from Montage";
+        stageMsg("Clips are ready \u2014 continue to build the montage.");
+      } else if (hasHighlights) {
+        failedStage = 1;
+        $("start").textContent = "Continue from Clips";
+        stageMsg("Detection finished \u2014 continue to cut clips.");
+      } else {
         stageMsg("No montage rendered yet \u2014 press Start Processing.");
       }
     }
