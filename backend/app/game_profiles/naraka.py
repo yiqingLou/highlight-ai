@@ -24,9 +24,9 @@ from app.paths import MODELS_DIR
 # filtered while real kills remain comfortably above the threshold.
 CONF_THRESHOLD = 0.55
 
-# Frames sampled at fps; scratch detections closer than this many seconds are
-# the SAME kill (the icon persists across 2-3 neighbouring frames at 1 fps).
-SAME_KILL_GAP_SEC = 2.0
+# 1.0s at 2fps still absorbs a one-frame dropout of a single scratch,
+# while splitting genuine close doubles (kills 1.5-4s apart) correctly.
+SAME_KILL_GAP_SEC = 1.0
 
 # Two separate kills within this many seconds belong to the same multi-kill
 # streak. Naraka is melee-paced, so the streak window is wider than a MOBA's.
