@@ -61,3 +61,5 @@ backend/build/
 backend/uploads/
 backend/bin/
 batch_scan_work/
+highlight-ai-test.zip
+*.7z*
