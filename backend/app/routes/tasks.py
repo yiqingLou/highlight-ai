@@ -1125,6 +1125,9 @@ def get_task_clips(task_id: int, db: Session = Depends(get_db)):
                 "duration_sec": c.duration_sec,
                 "resolution": c.resolution,
                 "highlight_ids": json.loads(c.highlight_ids) if c.highlight_ids else [],
+                "start_sec": (h := db.query(Highlight).filter(Highlight.id == (json.loads(c.highlight_ids) or [0])[0]).first()) and h.start_sec,
+                "end_sec": h.end_sec if h else None,
+                "label": h.label if h else None,
             }
             for c in clips
         ],
@@ -1254,4 +1257,75 @@ def export_task_vertical(
         "status": "exporting_vertical",
         "message": "Exporting 9:16 vertical cut in background.",
         "output": f"clips/{task_id}/montage_vertical.mp4",
+    }
+
+
+@router.post("/{task_id}/clips/{clip_id}/recut")
+def recut_clip(
+    task_id: int,
+    clip_id: int,
+    start_sec: float,
+    end_sec: float,
+    slowmo: bool = True,
+    db: Session = Depends(get_db),
+):
+    """Re-cut one clip with user-adjusted boundaries (per-clip trim)."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    if task.status == "processing":
+        raise HTTPException(status_code=409, detail="Task is busy; wait for the current stage")
+    clip = db.query(Clip).filter(Clip.id == clip_id, Clip.task_id == task_id).first()
+    if clip is None:
+        raise HTTPException(status_code=404, detail=f"Clip {clip_id} not found")
+
+    duration = task.duration_sec or 0
+    if not (0 <= start_sec < end_sec) or (duration and end_sec > duration):
+        raise HTTPException(status_code=400, detail="Invalid boundaries")
+    if end_sec - start_sec < 2:
+        raise HTTPException(status_code=400, detail="Clip must be at least 2 seconds")
+
+    hl = None
+    try:
+        hl_ids = json.loads(clip.highlight_ids) if clip.highlight_ids else []
+        if hl_ids:
+            hl = db.query(Highlight).filter(Highlight.id == hl_ids[0]).first()
+    except ValueError:
+        pass
+
+    try:
+        cut_clip(
+            video_path=task.file_path,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            output_path=clip.output_path,
+        )
+    except (FileNotFoundError, ValueError, VideoProbeError) as e:
+        raise HTTPException(status_code=500, detail=f"Re-cut failed: {e}")
+
+    # Re-apply the kill slow-mo with the new boundaries (same rule as the worker).
+    if slowmo and hl is not None and hl.label == "kill" and hl.reason:
+        try:
+            meta = ast.literal_eval(hl.reason)
+            first_kill = float(meta.get("first_kill_sec", 0.0))
+            kill_in_clip = first_kill - start_sec
+            if kill_in_clip > 1.8:
+                tmp_path = Path(clip.output_path).parent / f"_recut_{clip.id}.mp4"
+                apply_kill_slowmo(clip.output_path, str(tmp_path), kill_sec=kill_in_clip)
+                tmp_path.replace(clip.output_path)
+        except (ValueError, VideoProbeError, OSError):
+            pass  # best-effort, keep the plain re-cut
+
+    clip.duration_sec = round(_probe_duration(clip.output_path), 2)
+    clip.file_size = get_clip_file_size(clip.output_path)
+    if hl is not None:
+        hl.start_sec = start_sec
+        hl.end_sec = end_sec
+    db.commit()
+
+    return {
+        "clip_id": clip.id,
+        "start_sec": start_sec,
+        "end_sec": end_sec,
+        "duration_sec": clip.duration_sec,
     }

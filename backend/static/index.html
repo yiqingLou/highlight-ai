@@ -222,6 +222,11 @@
     .clip-thumb .cname { flex: 1; font-size: 0.74em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .clip-thumb .cdl { color: var(--faint); text-decoration: none; font-size: 1.05em; }
     .clip-thumb .cdl:hover { color: var(--gold); }
+    .trim { display: flex; align-items: center; gap: 4px; padding: 0 8px 8px; font-size: 0.68em; color: var(--dim); }
+    .trim button { padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line); background: rgba(255,255,255,0.06); color: #ddd; cursor: pointer; font-size: 1em; }
+    .trim button:hover { border-color: var(--gold); color: var(--gold); }
+    .trim .tspan { flex: 1; text-align: right; }
+    .trim .tapply { color: var(--gold); border-color: rgba(255,210,74,0.4); }
     .clip-thumb { position: relative; }
     .clip-thumb .csel {
       position: absolute; top: 8px; left: 8px; z-index: 2;
@@ -464,9 +469,38 @@
             `<input type="checkbox" class="csel" checked title="Include in montage" />` +
             `<video src="/clips/${id}/${fname}#t=1" muted preload="metadata"></video>` +
             `<div class="crow"><div class="cname">${fname}</div>` +
-            `<a class="cdl" href="/clips/${id}/${fname}" download title="Download clip">&#10515;</a></div>`;
+            `<a class="cdl" href="/clips/${id}/${fname}" download title="Download clip">&#10515;</a></div>` +
+            `<div class="trim">S <button data-t="s-">−1</button><button data-t="s+">+1</button>` +
+            ` E <button data-t="e-">−1</button><button data-t="e+">+1</button>` +
+            `<span class="tspan">${(c.start_sec ?? 0).toFixed(1)}–${(c.end_sec ?? 0).toFixed(1)}s</span>` +
+            `<button class="tapply" data-t="go">Re-cut</button></div>`;
           div.querySelector(".cdl").addEventListener("click", (e) => e.stopPropagation());
           div.querySelector(".csel").addEventListener("click", (e) => e.stopPropagation());
+          div.dataset.ts = c.start_sec ?? 0;
+          div.dataset.te = c.end_sec ?? 0;
+          div.querySelectorAll(".trim button").forEach((b) =>
+            b.addEventListener("click", async (e) => {
+              e.stopPropagation();
+              let s = parseFloat(div.dataset.ts), t = parseFloat(div.dataset.te);
+              const k = b.dataset.t;
+              if (k === "s-") s = Math.max(0, s - 1);
+              if (k === "s+") s = Math.min(t - 2, s + 1);
+              if (k === "e-") t = Math.max(s + 2, t - 1);
+              if (k === "e+") t = t + 1;
+              if (k !== "go") {
+                div.dataset.ts = s; div.dataset.te = t;
+                div.querySelector(".tspan").textContent = `${s.toFixed(1)}–${t.toFixed(1)}s`;
+                return;
+              }
+              b.disabled = true; stageMsg(`Re-cutting clip ${c.id}\u2026`);
+              try {
+                const r = await fetch(`/api/tasks/${id}/clips/${c.id}/recut?start_sec=${s}&end_sec=${t}&slowmo=${$("opt-slowmo").checked}`, { method: "POST" });
+                if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+                div.querySelector("video").src = `/clips/${id}/${fname}#t=1&x=${Date.now()}`;
+                stageMsg(`Clip ${c.id} re-cut \u2014 rebuild the montage to use it.`);
+              } catch (err) { stageMsg(`Re-cut failed: ${err.message}`); }
+              finally { b.disabled = false; }
+            }));
           div.addEventListener("click", () => {
             $("player-video").src = `/clips/${id}/${fname}`;
             $("result").style.display = "block";
