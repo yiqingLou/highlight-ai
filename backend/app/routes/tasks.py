@@ -1329,3 +1329,57 @@ def recut_clip(
         "end_sec": end_sec,
         "duration_sec": clip.duration_sec,
     }
+
+
+def _run_queue_in_background(
+    task_ids: list[int],
+    slowmo: bool,
+    bgm_path,
+    captions: bool,
+    transitions: bool,
+    intro_outro: bool,
+    player_name: str,
+) -> None:
+    """Run the full pipeline for several tasks, one after another."""
+    for tid in task_ids:
+        try:
+            _run_frame_extraction_in_background(tid, EXTRACTION_FPS)
+            _run_clip_generation_in_background(tid, slowmo)
+            _run_montage_in_background(
+                tid, bgm_path, captions, transitions, intro_outro, player_name, ""
+            )
+            _run_thumbnail_generation_in_background(tid)
+        except Exception:
+            # A hard failure on one video must not sink the rest of the queue.
+            continue
+
+
+@router.post("/queue", status_code=202)
+def queue_tasks(
+    task_ids: str,
+    background_tasks: BackgroundTasks,
+    slowmo: bool = True,
+    captions: bool = True,
+    transitions: bool = True,
+    intro_outro: bool = True,
+    player_name: str = "",
+    bgm: str = "",
+    db: Session = Depends(get_db),
+):
+    """Queue several tasks for sequential full-pipeline processing."""
+    try:
+        ids = [int(x) for x in task_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="task_ids must be comma-separated integers")
+    if not ids:
+        raise HTTPException(status_code=400, detail="No task ids given")
+    found = {t.id for t in db.query(Task).filter(Task.id.in_(ids)).all()}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Tasks not found: {missing}")
+
+    background_tasks.add_task(
+        _run_queue_in_background, ids, slowmo, bgm.strip() or None,
+        captions, transitions, intro_outro, player_name,
+    )
+    return {"queued": ids, "message": f"Processing {len(ids)} tasks sequentially."}

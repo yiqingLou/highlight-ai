@@ -307,6 +307,11 @@
         <div class="divider">OR USE A LOCAL PATH (NO COPYING)</div>
         <label for="path">Path to your recording (.mp4)</label>
         <input type="text" id="path" placeholder="C:\Users\you\Videos\match.mp4" spellcheck="false" />
+        <div class="hint" style="margin-top:18px">BATCH — ONE PATH PER LINE</div>
+        <textarea id="batchPaths" rows="4" spellcheck="false"
+          placeholder="C:\videos\match1.mp4&#10;C:\videos\match2.mp4"
+          style="width:100%;background:rgba(10,10,16,0.7);color:#ececf1;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:0.9em"></textarea>
+        <button id="batchGo">Create &amp; queue all</button>
         <button id="create">Create Task</button>
         <div id="status"></div>
       </div>
@@ -332,6 +337,13 @@
           </div>
           <div class="bar"><div id="barFill"></div></div>
           <div id="stageMsg"></div>
+          <label for="styleSel">Style preset</label>
+          <select id="styleSel">
+            <option value="custom">Custom</option>
+            <option value="hype">Hype — all effects, epic BGM</option>
+            <option value="cinematic">Cinematic — slow-mo &amp; transitions, no captions</option>
+            <option value="minimal">Minimal — raw cuts, no BGM</option>
+          </select>
           <div class="opts">
             <div class="opt">Slow motion
               <label class="switch"><input type="checkbox" id="opt-slowmo" checked><span class="knob"></span></label>
@@ -912,6 +924,59 @@
       } finally {
         $("vertical").disabled = false;
       }
+    });
+
+    // ---- Style presets (combinations of existing knobs) ----
+    const STYLES = {
+      hype:      { slowmo: true,  transitions: true,  captions: true,  intro: true,  bgmHint: "epic" },
+      cinematic: { slowmo: true,  transitions: true,  captions: false, intro: true,  bgmHint: "" },
+      minimal:   { slowmo: false, transitions: false, captions: false, intro: false, bgmHint: null },
+    };
+
+    $("styleSel").addEventListener("change", () => {
+      const st = STYLES[$("styleSel").value];
+      if (!st) return;                       // Custom: touch nothing
+      $("opt-slowmo").checked = st.slowmo;
+      $("opt-transitions").checked = st.transitions;
+      $("opt-captions").checked = st.captions;
+      $("opt-intro").checked = st.intro;
+      const sel = $("bgmSel");
+      if (st.bgmHint === null) sel.value = "";           // No BGM
+      else if (st.bgmHint) {
+        const hit = [...sel.options].find((o) => o.textContent.toLowerCase().includes(st.bgmHint));
+        if (hit) sel.value = hit.value;
+      }
+      savePrefs();
+    });
+
+    // Touching any knob by hand = back to Custom.
+    ["opt-slowmo", "opt-transitions", "opt-captions", "opt-intro", "bgmSel"].forEach((id) =>
+      $(id).addEventListener("change", () => { $("styleSel").value = "custom"; }));
+
+    $("batchGo").addEventListener("click", async () => {
+      const paths = $("batchPaths").value.split("\n").map((s) => s.trim()).filter(Boolean);
+      if (!paths.length) { alert("Paste at least one path."); return; }
+      $("batchGo").disabled = true;
+      const ids = [];
+      try {
+        for (const p of paths) {
+          const r = await fetch("/api/tasks/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ file_path: p }),
+          });
+          if (!r.ok) throw new Error(`Create failed for ${p}: HTTP ${r.status}`);
+          const j = await r.json();
+          ids.push(j.id ?? j.task_id);
+        }
+        const bgm = encodeURIComponent($("bgmSel").value);
+        const pn = encodeURIComponent($("player").value.trim());
+        const q = await fetch(`/api/tasks/queue?task_ids=${ids.join(",")}&slowmo=${$("opt-slowmo").checked}&captions=${$("opt-captions").checked}&transitions=${$("opt-transitions").checked}&intro_outro=${$("opt-intro").checked}&player_name=${pn}&bgm=${bgm}`, { method: "POST" });
+        if (!q.ok) throw new Error(`Queue failed: HTTP ${q.status}`);
+        alert(`Queued ${ids.length} videos — watch them in Library.`);
+        loadHistory();
+      } catch (e) { alert(e.message); }
+      finally { $("batchGo").disabled = false; }
     });
   </script>
 </body>
